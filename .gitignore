@@ -1,0 +1,23 @@
+# CMake
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+Testing/
+
+# .NET
+bin/
+obj/
+.vs/
+
+# Sauvegardes
+backup_*/
+*.backup*
+*.bak*
+*.before_*
+*.old
+*.tmp
+
+# Fichiers système
+Thumbs.db
+Desktop.ini
