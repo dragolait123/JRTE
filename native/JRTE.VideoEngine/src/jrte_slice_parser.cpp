@@ -303,17 +303,16 @@ namespace jrte::h264
                 return false;
 
             const uint64_t maximum =
-                (picture_size + pps.slice_group_change_rate - 1) /
-                pps.slice_group_change_rate;
+    (picture_size / pps.slice_group_change_rate) + 1;
 
-            uint32_t bit_count = 0;
-            uint64_t value = maximum;
+uint32_t bit_count = 0;
+uint64_t value = maximum - 1;
 
-            while (value != 0)
-            {
-                ++bit_count;
-                value >>= 1;
-            }
+while (value > 0)
+{
+    ++bit_count;
+    value >>= 1;
+}
 
             if (bit_count > 32)
                 return false;
