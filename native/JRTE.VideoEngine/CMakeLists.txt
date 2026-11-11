@@ -1,7 +1,7 @@
 ﻿cmake_minimum_required(VERSION 3.20)
 
 project(JRTE.VideoEngine
-    VERSION 1.0.0
+    VERSION 4.5.0
     LANGUAGES CXX
 )
 
@@ -18,6 +18,7 @@ add_library(JRTE.VideoEngine SHARED
     src/jrte_bit_reader.cpp
     src/jrte_sps_parser.cpp
     src/jrte_pps_parser.cpp
+    src/jrte_cabac_decoder.cpp
     src/jrte_slice_parser.cpp
 )
 
@@ -119,4 +120,20 @@ target_include_directories(jrte_bit_reader_test
 add_test(
     NAME JRTE_Bit_Reader_Test
     COMMAND jrte_bit_reader_test
+)
+
+
+
+add_executable(jrte_cabac_decoder_test
+    tests/jrte_cabac_decoder_test.cpp
+    src/jrte_cabac_decoder.cpp
+)
+
+target_include_directories(jrte_cabac_decoder_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+add_test(
+    NAME JRTE_CABAC_Decoder_Test
+    COMMAND jrte_cabac_decoder_test
 )
