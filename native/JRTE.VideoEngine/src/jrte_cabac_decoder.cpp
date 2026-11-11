@@ -1,5 +1,6 @@
-﻿#include "jrte_cabac_decoder.h"
+#include "jrte_cabac_decoder.h"
 #include "jrte_cabac_tables.h"
+#include "jrte_cabac_context_tables.h"
 
 #include <limits>
 

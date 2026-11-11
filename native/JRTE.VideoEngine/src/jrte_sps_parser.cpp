@@ -1,4 +1,4 @@
-﻿#include "jrte_sps_parser.h"
+#include "jrte_sps_parser.h"
 #include "jrte_bit_reader.h"
 
 #include <cstdint>
@@ -52,6 +52,171 @@ namespace jrte::h264
             default:
                 return false;
         }
+    }
+
+
+    bool skip_hrd_parameters(BitReader& bits)
+    {
+        uint32_t cpb_count_minus1 = 0;
+        uint32_t value = 0;
+
+        if (!bits.read_ue(cpb_count_minus1) || cpb_count_minus1 > 31)
+            return false;
+
+        if (!bits.read_bits(4, value) ||
+            !bits.read_bits(4, value))
+            return false;
+
+        for (uint32_t i = 0; i <= cpb_count_minus1; ++i)
+        {
+            if (!bits.read_ue(value) ||
+                !bits.read_ue(value) ||
+                !bits.read_bit(value))
+                return false;
+        }
+
+        return bits.read_bits(5, value) &&
+               bits.read_bits(5, value) &&
+               bits.read_bits(5, value) &&
+               bits.read_bits(5, value);
+    }
+
+    bool skip_vui_parameters(BitReader& bits)
+    {
+        uint32_t value = 0;
+        uint32_t flag = 0;
+
+        // aspect_ratio_info_present_flag
+        if (!bits.read_bit(flag))
+            return false;
+
+        if (flag)
+        {
+            if (!bits.read_bits(8, value))
+                return false;
+
+            if (value == 255)
+            {
+                uint32_t sar_width = 0;
+                uint32_t sar_height = 0;
+
+                if (!bits.read_bits(16, sar_width) ||
+                    !bits.read_bits(16, sar_height) ||
+                    sar_width == 0 || sar_height == 0)
+                    return false;
+            }
+        }
+
+        // overscan_info_present_flag
+        if (!bits.read_bit(flag))
+            return false;
+
+        if (flag && !bits.read_bit(value))
+            return false;
+
+        // video_signal_type_present_flag
+        if (!bits.read_bit(flag))
+            return false;
+
+        if (flag)
+        {
+            if (!bits.read_bits(3, value) ||
+                !bits.read_bit(value) ||
+                !bits.read_bit(flag))
+                return false;
+
+            if (flag)
+            {
+                if (!bits.read_bits(8, value) ||
+                    !bits.read_bits(8, value) ||
+                    !bits.read_bits(8, value))
+                    return false;
+            }
+        }
+
+        // chroma_loc_info_present_flag
+        if (!bits.read_bit(flag))
+            return false;
+
+        if (flag)
+        {
+            if (!bits.read_ue(value) || !bits.read_ue(value))
+                return false;
+        }
+
+        // timing_info_present_flag
+        if (!bits.read_bit(flag))
+            return false;
+
+        if (flag)
+        {
+            if (!bits.read_bits(32, value) ||
+                !bits.read_bits(32, value) ||
+                !bits.read_bit(value))
+                return false;
+        }
+
+        // nal_hrd_parameters_present_flag
+        uint32_t nal_hrd = 0;
+        uint32_t vcl_hrd = 0;
+
+        if (!bits.read_bit(nal_hrd))
+            return false;
+
+        if (nal_hrd && !skip_hrd_parameters(bits))
+            return false;
+
+        // vcl_hrd_parameters_present_flag
+        if (!bits.read_bit(vcl_hrd))
+            return false;
+
+        if (vcl_hrd && !skip_hrd_parameters(bits))
+            return false;
+
+        // low_delay_hrd_flag
+        if ((nal_hrd || vcl_hrd) && !bits.read_bit(value))
+            return false;
+
+        // pic_struct_present_flag
+        if (!bits.read_bit(value))
+            return false;
+
+        // bitstream_restriction_flag
+        if (!bits.read_bit(flag))
+            return false;
+
+        if (flag)
+        {
+            if (!bits.read_bit(value))
+                return false;
+
+            for (uint32_t i = 0; i < 6; ++i)
+            {
+                if (!bits.read_ue(value))
+                    return false;
+            }
+        }
+
+        return bits.good();
+    }
+
+    bool read_rbsp_trailing_bits(BitReader& bits)
+    {
+        uint32_t value = 0;
+
+        // rbsp_stop_one_bit doit être égal à 1.
+        if (!bits.read_bit(value) || value != 1)
+            return false;
+
+        // Les bits d'alignement doivent être égaux à 0.
+        while ((bits.bits_remaining() % 8) != 0)
+        {
+            if (!bits.read_bit(value) || value != 0)
+                return false;
+        }
+
+        // Aucun octet supplémentaire ne doit rester.
+        return bits.bits_remaining() == 0 && bits.good();
     }
 
     SpsInfo parse_sps(const uint8_t* nal, uint32_t nal_size)
@@ -309,6 +474,13 @@ namespace jrte::h264
                 ? (frame_mbs_only ? 1 : 2)
                 : sub_height_c * (frame_mbs_only ? 1 : 2);
 
+        uint32_t vui_present = 0;
+
+        if (!bits.read_bit(vui_present))
+            return fail("Flag VUI SPS tronque.");
+
+        if (vui_present && !skip_vui_parameters(bits))
+            return fail("Parametres VUI SPS invalides ou tronques.");
         const uint64_t crop_x =
             uint64_t(crop_left + uint64_t(crop_right)) * crop_unit_x;
 
@@ -336,11 +508,11 @@ namespace jrte::h264
         result.crop_right = crop_right;
         result.crop_top = crop_top;
         result.crop_bottom = crop_bottom;
-        result.valid = true;
 
+        if (!read_rbsp_trailing_bits(bits))
+            return fail("Bits de fin RBSP SPS invalides ou tronques.");
+
+        result.valid = true;
         return result;
     }
 }
-
-
-

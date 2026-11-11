@@ -1,4 +1,4 @@
-﻿#include "jrte_bit_reader.h"
+#include "jrte_bit_reader.h"
 
 #include <limits>
 
@@ -25,19 +25,24 @@ namespace jrte::h264
         {
             const uint8_t byte = input[i];
 
-            // Retirer uniquement un véritable octet
-            // emulation_prevention_three_byte.
-            if (zero_count >= 2 && byte == 0x03 &&
-                i + 1 < input_size &&
-                input[i + 1] <= 0x03)
+            if (zero_count >= 2)
             {
-                // L'octet 03 est retire.
-                // Recommencer le comptage pour les octets suivants.
-                zero_count = 0;
-                continue;
+                if (byte == 0x03 &&
+                    i + 1 < input_size &&
+                    input[i + 1] <= 0x03)
+                {
+                    zero_count = 0;
+                    continue;
+                }
+
+                if (byte <= 0x02)
+                {
+                    output.clear();
+                    error = "Sequence EBSP invalide : prevention absente.";
+                    return false;
+                }
             }
 
-            // Sinon, le byte 03 est conserve comme donnee.
             output.push_back(byte);
 
             if (byte == 0x00)

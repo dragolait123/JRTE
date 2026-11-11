@@ -137,3 +137,19 @@ add_test(
     NAME JRTE_CABAC_Decoder_Test
     COMMAND jrte_cabac_decoder_test
 )
+
+
+add_executable(jrte_sei_parser_test
+    tests/jrte_sei_parser_test.cpp
+    src/jrte_sei_parser.cpp
+    src/jrte_bit_reader.cpp
+)
+
+target_include_directories(jrte_sei_parser_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+add_test(
+    NAME JRTE_SEI_Parser_Test
+    COMMAND jrte_sei_parser_test
+)

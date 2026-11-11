@@ -45,6 +45,22 @@ int main()
         return 2;
     }
 
-    std::cout << "SUCCES : SPS valide et resolution confirmee.\n";
+    for (uint32_t length = 1;
+         length < static_cast<uint32_t>(sizeof(sps));
+         ++length)
+    {
+        const auto truncated = jrte::h264::parse_sps(sps, length);
+
+        if (truncated.valid)
+        {
+            std::cerr
+                << "ECHEC : SPS tronque accepte avec "
+                << length << " octets.\n";
+            return 3;
+        }
+    }
+
+    std::cout << "SUCCES : SPS valide, resolution confirmee "
+              << "et SPS tronques rejetes.\n";
     return 0;
 }
