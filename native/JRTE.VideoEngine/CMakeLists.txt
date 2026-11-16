@@ -19,6 +19,7 @@ add_library(JRTE.VideoEngine SHARED
     src/jrte_sps_parser.cpp
     src/jrte_pps_parser.cpp
     src/jrte_slice_parser.cpp
+    src/jrte_cavlc_decoder.cpp
 )
 
 target_include_directories(JRTE.VideoEngine
@@ -45,6 +46,7 @@ add_executable(jrte_sps_parser_test
     src/jrte_sps_parser.cpp
     src/jrte_pps_parser.cpp
     src/jrte_slice_parser.cpp
+    src/jrte_cavlc_decoder.cpp
     src/jrte_bit_reader.cpp
 )
 
@@ -63,6 +65,7 @@ add_executable(jrte_h264_integration_test
     src/jrte_sps_parser.cpp
     src/jrte_pps_parser.cpp
     src/jrte_slice_parser.cpp
+    src/jrte_cavlc_decoder.cpp
     src/jrte_bit_reader.cpp
 )
 
@@ -79,6 +82,7 @@ add_executable(jrte_pps_parser_test
     tests/jrte_pps_parser_test.cpp
     src/jrte_pps_parser.cpp
     src/jrte_slice_parser.cpp
+    src/jrte_cavlc_decoder.cpp
     src/jrte_bit_reader.cpp
 )
 
@@ -95,6 +99,7 @@ add_test(
 add_executable(jrte_slice_parser_test
     tests/jrte_slice_parser_test.cpp
     src/jrte_slice_parser.cpp
+    src/jrte_cavlc_decoder.cpp
     src/jrte_bit_reader.cpp
 )
 
@@ -119,4 +124,19 @@ target_include_directories(jrte_bit_reader_test
 add_test(
     NAME JRTE_Bit_Reader_Test
     COMMAND jrte_bit_reader_test
+)
+
+add_executable(jrte_cavlc_decoder_test
+    tests/jrte_cavlc_decoder_test.cpp
+    src/jrte_cavlc_decoder.cpp
+    src/jrte_bit_reader.cpp
+)
+
+target_include_directories(jrte_cavlc_decoder_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+add_test(
+    NAME JRTE_CAVLC_Decoder_Test
+    COMMAND jrte_cavlc_decoder_test
 )
