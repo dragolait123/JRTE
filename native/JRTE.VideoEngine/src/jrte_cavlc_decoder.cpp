@@ -1,4 +1,4 @@
-﻿#include "jrte_cavlc_decoder.h"
+#include "jrte_cavlc_decoder.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -166,5 +166,47 @@ namespace jrte::h264
 
         error = "Code coeff_token inconnu ou invalide.";
         return false;
+    }
+}
+
+namespace jrte::h264
+{
+    bool decode_trailing_one_signs(
+        BitReader& bits,
+        uint8_t trailing_ones,
+        std::vector<int8_t>& levels,
+        std::string& error)
+    {
+        levels.clear();
+        error.clear();
+
+        if (trailing_ones > 3)
+        {
+            error = "Nombre de trailing ones invalide.";
+            return false;
+        }
+
+        if (!bits.good())
+        {
+            error = "BitReader invalide : " + bits.error();
+            return false;
+        }
+
+        for (uint8_t i = 0; i < trailing_ones; ++i)
+        {
+            uint32_t sign = 0;
+
+            if (!bits.read_bit(sign))
+            {
+                levels.clear();
+                error = "Flux tronque pendant les signes trailing ones : "
+                    + bits.error();
+                return false;
+            }
+
+            levels.push_back(sign ? -1 : 1);
+        }
+
+        return true;
     }
 }

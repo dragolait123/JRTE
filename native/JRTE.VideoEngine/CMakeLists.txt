@@ -140,3 +140,20 @@ add_test(
     NAME JRTE_CAVLC_Decoder_Test
     COMMAND jrte_cavlc_decoder_test
 )
+
+add_executable(jrte_mp4_demux_test
+    tests/jrte_mp4_demux_test.cpp
+)
+
+target_include_directories(jrte_mp4_demux_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(jrte_mp4_demux_test
+    PRIVATE JRTE.VideoEngine
+)
+
+add_test(
+    NAME JRTE_MP4_Demux_Test
+    COMMAND jrte_mp4_demux_test
+)
