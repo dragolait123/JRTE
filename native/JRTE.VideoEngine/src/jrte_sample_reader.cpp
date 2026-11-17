@@ -1,10 +1,11 @@
-﻿#include "jrte_sample_reader.h"
+#include "jrte_sample_reader.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <limits>
 #include <sstream>
+#include <string>
 #include <vector>
 
 namespace
@@ -24,6 +25,12 @@ namespace
         uint32_t first_chunk = 0;
         uint32_t samples_per_chunk = 0;
         uint32_t description_index = 0;
+    };
+
+    struct TimingRun
+    {
+        uint32_t count = 0;
+        int64_t value = 0;
     };
 
     uint32_t u32(const unsigned char* p)
@@ -150,6 +157,41 @@ namespace
         return true;
     }
 
+    bool parse_mdhd(
+        std::ifstream& file,
+        const Box& box,
+        uint32_t& timescale,
+        uint64_t& duration)
+    {
+        unsigned char h[32]{};
+
+        if (box.size < box.header + 20 ||
+            !read_bytes(file, box.offset + box.header, h, 20))
+            return false;
+
+        const uint8_t version = h[0];
+
+        if (version == 0)
+        {
+            timescale = u32(h + 12);
+            duration = u32(h + 16);
+            return timescale != 0;
+        }
+
+        if (version == 1)
+        {
+            if (box.size < box.header + 32 ||
+                !read_bytes(file, box.offset + box.header, h, 32))
+                return false;
+
+            timescale = u32(h + 20);
+            duration = u64(h + 24);
+            return timescale != 0;
+        }
+
+        return false;
+    }
+
     bool parse_stsz(
         std::ifstream& file,
         const Box& box,
@@ -196,9 +238,10 @@ namespace
         return true;
     }
 
-    bool parse_stts(
+    bool parse_timing_table(
         std::ifstream& file,
         const Box& box,
+        std::vector<TimingRun>& runs,
         uint64_t& sample_count,
         uint64_t& total_duration)
     {
@@ -211,6 +254,9 @@ namespace
         if (uint64_t(count) * 8 > box.size - box.header - 8)
             return false;
 
+        runs.clear();
+        runs.reserve(count);
+
         sample_count = 0;
         total_duration = 0;
 
@@ -222,19 +268,75 @@ namespace
                             entry, 8))
                 return false;
 
-            const uint64_t n = u32(entry);
-            const uint64_t delta = u32(entry + 4);
+            const uint32_t n = u32(entry);
+            const uint32_t value = u32(entry + 4);
 
-            if (n > MAX_SAMPLES - sample_count)
+            if (n == 0 || n > MAX_SAMPLES - sample_count)
                 return false;
 
-            if (delta != 0 &&
+            if (value != 0 &&
                 n > (std::numeric_limits<uint64_t>::max()
-                     - total_duration) / delta)
+                     - total_duration) / value)
                 return false;
+
+            runs.push_back({ n, value });
+            sample_count += n;
+            total_duration += uint64_t(n) * value;
+        }
+
+        return true;
+    }
+
+    bool parse_ctts(
+        std::ifstream& file,
+        const Box& box,
+        std::vector<TimingRun>& runs,
+        uint64_t& sample_count)
+    {
+        uint32_t count = 0;
+        uint64_t data = 0;
+
+        if (!read_fullbox_header(file, box, count, data))
+            return false;
+
+        unsigned char version_byte[4]{};
+
+        if (!read_bytes(file, box.offset + box.header,
+                        version_byte, 4))
+            return false;
+
+        const uint8_t version = version_byte[0];
+
+        if (version > 1 ||
+            uint64_t(count) * 8 > box.size - box.header - 8)
+            return false;
+
+        runs.clear();
+        runs.reserve(count);
+        sample_count = 0;
+
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            unsigned char entry[8]{};
+
+            if (!read_bytes(file, data + uint64_t(i) * 8,
+                            entry, 8))
+                return false;
+
+            const uint32_t n = u32(entry);
+            const uint32_t raw = u32(entry + 4);
+
+            if (n == 0 || n > MAX_SAMPLES - sample_count)
+                return false;
+
+            int64_t value = static_cast<int64_t>(raw);
+
+            if (version == 1 && raw > INT32_MAX)
+                value = -1 - int64_t(UINT32_MAX - raw);
+
+            runs.push_back({ n, value });
 
             sample_count += n;
-            total_duration += n * delta;
         }
 
         return true;
@@ -265,13 +367,14 @@ namespace
                             e, 12))
                 return false;
 
-            StscEntry item{
-                u32(e), u32(e + 4), u32(e + 8)
-            };
+            StscEntry item{ u32(e), u32(e + 4), u32(e + 8) };
 
             if (item.first_chunk == 0 ||
                 item.samples_per_chunk == 0 ||
                 item.description_index == 0)
+                return false;
+
+            if (entries.empty() && item.first_chunk != 1)
                 return false;
 
             if (!entries.empty() &&
@@ -357,6 +460,52 @@ namespace
         return true;
     }
 
+    bool timing_at(
+        const std::vector<TimingRun>& runs,
+        uint64_t index,
+        uint64_t& dts,
+        uint32_t& duration)
+    {
+        uint64_t current = 0;
+        uint64_t time = 0;
+
+        for (const auto& run : runs)
+        {
+            if (index < current + run.count)
+            {
+                dts = time + (index - current) * run.value;
+                duration = run.value;
+                return true;
+            }
+
+            time += uint64_t(run.count) * run.value;
+            current += run.count;
+        }
+
+        return false;
+    }
+
+    bool composition_at(
+        const std::vector<TimingRun>& runs,
+        uint64_t index,
+        int64_t& offset)
+    {
+        uint64_t current = 0;
+
+        for (const auto& run : runs)
+        {
+            if (index < current + run.count)
+            {
+                offset = run.value;
+                return true;
+            }
+
+            current += run.count;
+        }
+
+        return false;
+    }
+
     bool read_video_table_report(
         std::ifstream& file,
         const Box& trak,
@@ -364,7 +513,8 @@ namespace
         std::ostringstream& out)
     {
         Box mdia{}, hdlr{}, minf{}, stbl{};
-        Box stts{}, stsz{}, stsc{}, stco{}, co64{}, stss{};
+        Box mdhd{}, stts{}, stsz{}, stsc{}, stco{}, co64{};
+        Box stss{}, ctts{};
 
         if (!child(file, trak, "mdia", mdia) ||
             !child(file, mdia, "hdlr", hdlr))
@@ -400,12 +550,17 @@ namespace
         std::vector<StscEntry> mappings;
         std::vector<uint64_t> chunks;
         std::vector<uint32_t> sync;
+        std::vector<TimingRun> stts_runs;
+        std::vector<TimingRun> ctts_runs;
 
         uint64_t timing_samples = 0;
         uint64_t total_duration = 0;
+        uint64_t composition_samples = 0;
 
         if (!parse_stsz(file, stsz, sizes) ||
-            !parse_stts(file, stts, timing_samples, total_duration) ||
+            !parse_timing_table(
+                file, stts, stts_runs,
+                timing_samples, total_duration) ||
             !parse_stsc(file, stsc, mappings) ||
             !parse_chunk_offsets(
                 file, has_co64 ? co64 : stco,
@@ -414,6 +569,16 @@ namespace
 
         if (sizes.size() != timing_samples)
             return false;
+
+        const bool has_ctts = child(file, stbl, "ctts", ctts);
+
+        if (has_ctts)
+        {
+            if (!parse_ctts(
+                    file, ctts, ctts_runs, composition_samples) ||
+                composition_samples != sizes.size())
+                return false;
+        }
 
         const bool has_stss = child(file, stbl, "stss", stss);
 
@@ -426,10 +591,18 @@ namespace
                 return false;
         }
 
+        uint32_t timescale = 0;
+        uint64_t media_duration = 0;
+        const bool has_mdhd = child(file, mdia, "mdhd", mdhd);
+
+        if (has_mdhd &&
+            !parse_mdhd(file, mdhd, timescale, media_duration))
+            return false;
+
+        std::vector<uint64_t> sample_offsets;
+        sample_offsets.reserve(5);
+
         uint64_t sample_index = 0;
-        uint64_t first_offset = 0;
-        uint32_t first_size = 0;
-        uint64_t valid_samples = 0;
         size_t mapping_index = 0;
 
         for (size_t chunk_index = 0;
@@ -460,13 +633,8 @@ namespace
                     sample_size > file_size - current_offset)
                     return false;
 
-                if (sample_index == 0)
-                {
-                    first_offset = current_offset;
-                    first_size = sample_size;
-                }
-
-                ++valid_samples;
+                if (sample_offsets.size() < 5)
+                    sample_offsets.push_back(current_offset);
 
                 if (sample_size >
                     std::numeric_limits<uint64_t>::max() - current_offset)
@@ -480,13 +648,16 @@ namespace
         if (sample_index != sizes.size())
             return false;
 
-        const double seconds =
-            total_duration == 0 ? 0.0 :
-            static_cast<double>(total_duration);
-
         out << "\nJRTE SAMPLE READER - PISTE VIDEO\n";
-        out << "Echantillons : " << valid_samples << "\n";
+
+        if (has_mdhd)
+            out << "Timescale : " << timescale << "\n";
+        else
+            out << "Timescale : indisponible (mdhd absent)\n";
+
+        out << "Echantillons : " << sizes.size() << "\n";
         out << "Blocs (chunks) : " << chunks.size() << "\n";
+
         out << "Images cles : ";
 
         if (has_stss)
@@ -494,29 +665,80 @@ namespace
         else
             out << "table stss absente (tous les echantillons sont consideres cles)\n";
 
-        out << "Duree en unites de temps : " << total_duration << "\n";
-        out << "Premier echantillon : position " << first_offset
-            << ", taille " << first_size << " octets\n";
+        out << "Duree en unites de temps : "
+            << total_duration << "\n";
 
-        if (!sizes.empty())
+        if (has_mdhd && timescale != 0)
         {
-            out << "5 premiers echantillons :\n";
-
-            uint64_t offset = first_offset;
-
-            for (size_t i = 0; i < std::min<size_t>(5, sizes.size()); ++i)
-            {
-                out << "  #" << (i + 1)
-                    << " : position " << offset
-                    << ", taille " << sizes[i] << " octets\n";
-
-                if (sizes[i] >
-                    std::numeric_limits<uint64_t>::max() - offset)
-                    break;
-
-                offset += sizes[i];
-            }
+            out << "Duree media : "
+                << (static_cast<double>(media_duration) / timescale)
+                << " secondes\n";
         }
+
+        out << "\n";
+
+        const size_t display_count =
+            std::min<size_t>(5, sizes.size());
+
+        for (size_t i = 0; i < display_count; ++i)
+        {
+            uint64_t dts = 0;
+            uint32_t duration = 0;
+
+            if (!timing_at(stts_runs, i, dts, duration))
+                return false;
+
+            int64_t composition_offset = 0;
+
+            if (has_ctts &&
+                !composition_at(ctts_runs, i, composition_offset))
+                return false;
+
+            if (dts > uint64_t(INT64_MAX))
+                return false;
+
+            const int64_t signed_dts = static_cast<int64_t>(dts);
+
+            if ((composition_offset > 0 &&
+                 signed_dts > INT64_MAX - composition_offset) ||
+                (composition_offset < 0 &&
+                 signed_dts < INT64_MIN - composition_offset))
+                return false;
+
+            const int64_t pts = signed_dts + composition_offset;
+
+            out << "Sample #" << (i + 1) << "\n";
+            out << "  Offset : " << sample_offsets[i] << "\n";
+            out << "  Taille : " << sizes[i] << " octets\n";
+            out << "  DTS : " << dts << "\n";
+            out << "  PTS : " << pts << "\n";
+
+            if (has_mdhd && timescale != 0)
+            {
+                out << "  Duree : "
+                    << (static_cast<double>(duration) * 1000.0 /
+                        timescale)
+                    << " ms\n";
+            }
+            else
+            {
+                out << "  Duree : " << duration
+                    << " unites de temps\n";
+            }
+
+            const bool keyframe =
+                !has_stss ||
+                std::binary_search(
+                    sync.begin(), sync.end(),
+                    static_cast<uint32_t>(i + 1));
+
+            out << "  Keyframe : "
+                << (keyframe ? "oui" : "non") << "\n\n";
+        }
+
+        out << "Composition offsets : "
+            << (has_ctts ? "ctts present" : "ctts absent (PTS = DTS)")
+            << "\n";
 
         out << "Validation des tables : REUSSIE\n";
 

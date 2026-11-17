@@ -1,10 +1,11 @@
-﻿#include "jrte_api.h"
+#include "jrte_api.h"
 
 #include <cassert>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <string>
 #include <vector>
 
 using Bytes = std::vector<uint8_t>;
@@ -55,10 +56,91 @@ static Bytes make_ftyp()
     return make_box("ftyp", payload);
 }
 
+static Bytes make_mdhd(bool version1)
+{
+    Bytes payload;
+
+    if (!version1)
+    {
+        // FullBox version 0
+        u32(payload, 0);
+        u32(payload, 0);       // creation_time
+        u32(payload, 0);       // modification_time
+        u32(payload, 1000);    // timescale
+        u32(payload, 80);      // duration
+        payload.push_back(0x55);
+        payload.push_back(0xC4);
+        payload.push_back(0);
+        payload.push_back(0);
+    }
+    else
+    {
+        // FullBox version 1
+        u32(payload, 0x01000000);
+        u64(payload, 0);       // creation_time
+        u64(payload, 0);       // modification_time
+        u32(payload, 1000);    // timescale
+        u64(payload, 80);      // duration
+        payload.push_back(0x55);
+        payload.push_back(0xC4);
+        payload.push_back(0);
+        payload.push_back(0);
+    }
+
+    return make_box("mdhd", payload);
+}
+
+static Bytes make_stts()
+{
+    Bytes payload = {0, 0, 0, 0};
+
+    u32(payload, 1);  // entry_count
+    u32(payload, 2);  // sample_count
+    u32(payload, 40); // sample_delta
+
+    return make_box("stts", payload);
+}
+
+static Bytes make_ctts(bool version1, uint32_t positive_offset = 40)
+{
+    Bytes payload;
+
+    payload.push_back(version1 ? 1 : 0);
+    payload.push_back(0);
+    payload.push_back(0);
+    payload.push_back(0);
+
+    u32(payload, 2);
+
+    u32(payload, 1);
+    u32(payload, 0);
+
+    u32(payload, 1);
+
+    if (version1)
+        u32(payload, 0xFFFFFFF6); // -10, signed offset
+    else
+        u32(payload, positive_offset); // unsigned offset
+
+    return make_box("ctts", payload);
+}
+
+static Bytes make_stss()
+{
+    Bytes payload = {0, 0, 0, 0};
+
+    u32(payload, 1);
+    u32(payload, 1); // sample 1 is a keyframe
+
+    return make_box("stss", payload);
+}
+
 static Bytes make_moov(
     uint64_t first_offset,
     uint64_t second_offset,
-    bool use_co64)
+    bool use_co64,
+    bool mdhd_version1,
+    bool ctts_version1, uint32_t positive_offset = 40)
 {
     Bytes hdlr_payload = {
         0, 0, 0, 0,
@@ -74,7 +156,6 @@ static Bytes make_moov(
     u32(stsz_payload, 3);
     u32(stsz_payload, 2);
 
-    // Deux chunks, un echantillon par chunk.
     Bytes stsc_payload = {0, 0, 0, 0};
     u32(stsc_payload, 1);
     u32(stsc_payload, 1);
@@ -93,31 +174,49 @@ static Bytes make_moov(
     {
         assert(first_offset <= UINT32_MAX);
         assert(second_offset <= UINT32_MAX);
+
         u32(offsets_payload, static_cast<uint32_t>(first_offset));
         u32(offsets_payload, static_cast<uint32_t>(second_offset));
     }
 
     const Bytes stsz = make_box("stsz", stsz_payload);
     const Bytes stsc = make_box("stsc", stsc_payload);
+
     const Bytes offsets = make_box(
         use_co64 ? "co64" : "stco",
         offsets_payload
     );
 
-    const Bytes stbl = make_box("stbl", join({stsz, stsc, offsets}));
+    const Bytes stts = make_stts();
+    const Bytes ctts = make_ctts(ctts_version1, positive_offset);
+    const Bytes stss = make_stss();
+
+    const Bytes stbl = make_box(
+        "stbl",
+        join({stts, ctts, stss, stsz, stsc, offsets})
+    );
+
     const Bytes minf = make_box("minf", stbl);
     const Bytes hdlr = make_box("hdlr", hdlr_payload);
-    const Bytes mdia = make_box("mdia", join({hdlr, minf}));
+    const Bytes mdhd = make_mdhd(mdhd_version1);
+
+    const Bytes mdia = make_box(
+        "mdia",
+        join({mdhd, hdlr, minf})
+    );
+
     const Bytes trak = make_box("trak", mdia);
 
     return make_box("moov", trak);
 }
 
-static Bytes make_video_mp4(bool use_co64)
+static Bytes make_video_mp4(
+    bool use_co64,
+    bool mdhd_version1,
+    bool ctts_version1, uint32_t positive_offset = 40)
 {
     const Bytes ftyp = make_ftyp();
 
-    // Echantillon 1, octet de separation, echantillon 2.
     const Bytes mdat_payload = {
         0x11, 0x22, 0x33,
         0xEE,
@@ -125,7 +224,10 @@ static Bytes make_video_mp4(bool use_co64)
     };
 
     const Bytes mdat = make_box("mdat", mdat_payload);
-    const Bytes temporary_moov = make_moov(0, 0, use_co64);
+
+    const Bytes temporary_moov = make_moov(
+        0, 0, use_co64, mdhd_version1, ctts_version1, positive_offset
+    );
 
     const uint64_t first_offset =
         ftyp.size() + temporary_moov.size() + 8;
@@ -135,7 +237,10 @@ static Bytes make_video_mp4(bool use_co64)
     const Bytes moov = make_moov(
         first_offset,
         second_offset,
-        use_co64
+        use_co64,
+        mdhd_version1,
+        ctts_version1,
+        positive_offset
     );
 
     return join({ftyp, moov, mdat});
@@ -143,9 +248,13 @@ static Bytes make_video_mp4(bool use_co64)
 
 static void run_fixture(
     const std::filesystem::path& path,
-    bool use_co64)
+    bool use_co64,
+    bool mdhd_version1,
+    bool ctts_version1, uint32_t positive_offset = 40)
 {
-    const Bytes fixture = make_video_mp4(use_co64);
+    const Bytes fixture = make_video_mp4(
+        use_co64, mdhd_version1, ctts_version1, positive_offset
+    );
 
     {
         std::ofstream file(path, std::ios::binary);
@@ -233,14 +342,45 @@ static void run_fixture(
 
     assert(invalid_index_status == -5);
 
+    // Verifier le rapport Sample Reader via l'API publique.
+    char report[8192] = {};
+
+    const int32_t inspect_status =
+        jrte_mp4_inspect(
+            file_path.c_str(),
+            report,
+            sizeof(report)
+        );
+
+    assert(inspect_status == 0);
+
+    const std::string text(report);
+
+    assert(text.find("Timescale : 1000") != std::string::npos);
+    assert(text.find("DTS : 0") != std::string::npos);
+    assert(text.find("DTS : 40") != std::string::npos);
+    assert(text.find("Keyframe : oui") != std::string::npos);
+    assert(text.find("Keyframe : non") != std::string::npos);
+
+    if (ctts_version1)
+    {
+        assert(text.find("PTS : 30") != std::string::npos);
+    }
+    else
+    {
+        const int64_t expected_pts =
+            40 + static_cast<int64_t>(positive_offset);
+        assert(text.find("PTS : " + std::to_string(expected_pts)) != std::string::npos);
+    }
+
     std::filesystem::remove(path);
 
-    std::cout << "[OK] "
-              << (use_co64 ? "co64" : "stco")
-              << " sample count and extraction\n";
-    std::cout << "[OK] "
-              << (use_co64 ? "co64" : "stco")
-              << " output capacity and invalid index\n";
+    std::cout
+        << "[OK] "
+        << (use_co64 ? "co64" : "stco")
+        << " | mdhd v" << (mdhd_version1 ? 1 : 0)
+        << " | ctts v" << (ctts_version1 ? 1 : 0)
+        << " | DTS/PTS/keyframes/extraction\n";
 }
 
 int main()
@@ -248,9 +388,31 @@ int main()
     const auto directory =
         std::filesystem::temp_directory_path();
 
-    run_fixture(directory / "jrte_mp4_stco_test.mp4", false);
-    run_fixture(directory / "jrte_mp4_co64_test.mp4", true);
+    run_fixture(
+        directory / "jrte_mp4_timestamp_1.mp4",
+        false, false, false
+    );
 
-    std::cout << "[SUCCESS] All MP4 demux tests passed\n";
+    run_fixture(
+        directory / "jrte_mp4_timestamp_2.mp4",
+        false, true, true
+    );
+
+    run_fixture(
+        directory / "jrte_mp4_timestamp_3.mp4",
+        true, false, true
+    );
+
+    run_fixture(
+        directory / "jrte_mp4_timestamp_4.mp4",
+        true, true, false
+    );
+
+    run_fixture(
+        directory / "jrte_mp4_timestamp_5.mp4",
+        false, false, false, 0x80000000u
+    );
+
+    std::cout << "[SUCCESS] All MP4 timestamp tests passed\n";
     return 0;
 }
