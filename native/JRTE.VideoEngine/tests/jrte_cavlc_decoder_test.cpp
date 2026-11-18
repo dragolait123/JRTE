@@ -539,7 +539,31 @@ int main()
         0,
         expected_trailing_negative
     ));
-   std::cout << "\nCAVLC tests: " << passed
+
+    // Test : deux trailing ones avec un zero entre les coefficients.
+    std::array<int32_t, 16> expected_multi_trailing{};
+    expected_multi_trailing[0] = -1;
+    expected_multi_trailing[4] = 1;
+
+    run(check_residual_block(
+        "Bloc 4x4 deux trailing ones avec un zero",
+        "001011100",
+        0,
+        expected_multi_trailing
+    ));
+
+    // Test : deux niveaux non-trailing avec deux zeros.
+    std::array<int32_t, 16> expected_multi_levels{};
+    expected_multi_levels[4] = -2;
+    expected_multi_levels[8] = 2;
+
+    run(check_residual_block(
+        "Bloc 4x4 deux niveaux avec deux zeros",
+        "0000011110111011",
+        0,
+        expected_multi_levels
+    ));
+std::cout << "\nCAVLC tests: " << passed
               << " passed, " << failed << " failed.\n";
 
     return failed == 0 ? 0 : 1;
