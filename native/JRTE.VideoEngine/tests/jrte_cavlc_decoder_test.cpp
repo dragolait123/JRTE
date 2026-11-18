@@ -1,4 +1,4 @@
-﻿#include "jrte_cavlc_decoder.h"
+#include "jrte_cavlc_decoder.h"
 
 #include <cstdint>
 #include <iostream>
@@ -91,6 +91,338 @@ namespace
         std::cout << "[PASS] code fixe invalide rejete\n";
         return true;
     }
+
+    bool check_levels(
+        const std::string& name,
+        const std::string& encoded,
+        int nC,
+        const std::vector<int32_t>& expected)
+    {
+        const auto bytes = make_bits(encoded);
+        BitReader reader(bytes.data(), bytes.size());
+
+        CoeffToken token;
+        std::string error;
+
+        if (!decode_coeff_token(reader, nC, token, error))
+        {
+            std::cerr << "[FAIL] " << name
+                      << " coeff_token: " << error << '\n';
+            return false;
+        }
+
+        std::vector<int32_t> levels;
+
+        if (!decode_level_values(reader, token, levels, error))
+        {
+            std::cerr << "[FAIL] " << name
+                      << " levels: " << error << '\n';
+            return false;
+        }
+
+        if (levels != expected)
+        {
+            std::cerr << "[FAIL] " << name << " : niveaux inattendus\n";
+            std::cerr << "Obtenu : ";
+
+            for (const auto level : levels)
+                std::cerr << level << " ";
+
+            std::cerr << "\nAttendu : ";
+
+            for (const auto level : expected)
+                std::cerr << level << " ";
+
+            std::cerr << '\n';
+            return false;
+        }
+
+        std::cout << "[PASS] " << name << '\n';
+        return true;
+    }
+
+    bool check_truncated_level()
+    {
+        const auto bytes = make_bits("000101");
+        BitReader reader(bytes.data(), bytes.size());
+
+        CoeffToken token;
+        std::string error;
+
+        if (!decode_coeff_token(reader, 0, token, error))
+            return false;
+
+        std::vector<int32_t> levels;
+
+        if (decode_level_values(reader, token, levels, error))
+        {
+            std::cerr << "[FAIL] Flux level tronque accepte\n";
+            return false;
+        }
+
+        std::cout << "[PASS] Flux level tronque rejete\n";
+        return true;
+    }
+    bool check_total_zeros_tables()
+    {
+        static const char* codes[15][16] =
+        {
+            { "1", "011", "010", "0011", "0010", "00011", "00010", "000011", "000010", "0000011", "0000010", "00000011", "00000010", "000000011", "000000010", "000000001" },
+            { "111", "110", "101", "100", "011", "0101", "0100", "0011", "0010", "00011", "00010", "000011", "000010", "000001", "000000" },
+            { "0101", "111", "110", "101", "0100", "0011", "100", "011", "0010", "00011", "00010", "000001", "00001", "000000" },
+            { "00011", "111", "0101", "0100", "110", "101", "100", "0011", "011", "0010", "00010", "00001", "00000" },
+            { "0101", "0100", "0011", "111", "110", "101", "100", "011", "0010", "00001", "0001", "00000" },
+            { "000001", "00001", "111", "110", "101", "100", "011", "010", "0001", "001", "000000" },
+            { "000001", "00001", "101", "100", "011", "11", "010", "0001", "001", "000000" },
+            { "000001", "0001", "00001", "011", "11", "10", "010", "001", "000000" },
+            { "000001", "000000", "0001", "11", "10", "001", "01", "00001" },
+            { "00001", "00000", "001", "11", "10", "01", "0001" },
+            { "0000", "0001", "001", "010", "1", "011" },
+            { "0000", "0001", "01", "1", "001" },
+            { "000", "001", "1", "01" },
+            { "00", "01", "1" },
+            { "0", "1" }
+        };
+
+        for (int total_coeff = 1; total_coeff <= 15; ++total_coeff)
+        {
+            for (int zeros = 0; zeros <= 16 - total_coeff; ++zeros)
+            {
+                const char* encoded = codes[total_coeff - 1][zeros];
+
+                if (encoded == nullptr)
+                {
+                    std::cerr << "[FAIL] Code absent de la table\n";
+                    return false;
+                }
+
+                const auto bytes = make_bits(encoded);
+                BitReader reader(bytes.data(), bytes.size());
+
+                uint8_t actual = 255;
+                std::string error;
+
+                if (!decode_total_zeros(
+                    reader,
+                    static_cast<uint8_t>(total_coeff),
+                    actual,
+                    error))
+                {
+                    std::cerr << "[FAIL] TotalCoeff=" << total_coeff
+                              << " zeros=" << zeros
+                              << " : " << error << '\n';
+                    return false;
+                }
+
+                if (actual != zeros)
+                {
+                    std::cerr << "[FAIL] TotalCoeff=" << total_coeff
+                              << " attendu=" << zeros
+                              << " obtenu=" << unsigned(actual) << '\n';
+                    return false;
+                }
+            }
+
+            std::cout << "[PASS] Table total_zeros TotalCoeff="
+                      << total_coeff << '\n';
+        }
+
+        return true;
+    }
+
+    bool check_total_zeros_full_block()
+    {
+        const uint8_t data = 0xA5;
+        BitReader reader(&data, 1);
+
+        const size_t before = reader.bits_remaining();
+        uint8_t zeros = 255;
+        std::string error;
+
+        if (!decode_total_zeros(reader, 16, zeros, error))
+        {
+            std::cerr << "[FAIL] TotalCoeff=16 : " << error << '\n';
+            return false;
+        }
+
+        if (zeros != 0 || reader.bits_remaining() != before)
+        {
+            std::cerr << "[FAIL] TotalCoeff=16 : resultat incorrect\n";
+            return false;
+        }
+
+        std::cout << "[PASS] TotalCoeff=16 sans lecture de bits\n";
+        return true;
+    }
+
+    bool check_total_zeros_invalid()
+    {
+        const auto bytes = make_bits("000000000");
+        BitReader reader(bytes.data(), bytes.size());
+
+        uint8_t zeros = 255;
+        std::string error;
+
+        if (decode_total_zeros(reader, 1, zeros, error))
+        {
+            std::cerr << "[FAIL] Code invalide accepte\n";
+            return false;
+        }
+
+        std::cout << "[PASS] Code total_zeros invalide rejete\n";
+        return true;
+    }
+    bool check_run_before_tables()
+    {
+        static const char* codes[7][15] =
+        {
+            { "1", "0" },
+            { "1", "01", "00" },
+            { "11", "10", "01", "00" },
+            { "11", "10", "01", "001", "000" },
+            { "11", "10", "011", "010", "001", "000" },
+            { "11", "000", "001", "011", "010", "101", "100" },
+            {
+                "111", "110", "101", "100", "011",
+                "010", "001", "0001", "00001", "000001",
+                "0000001", "00000001", "000000001",
+                "0000000001", "00000000001"
+            }
+        };
+
+        for (int zeros_left = 1; zeros_left <= 15; ++zeros_left)
+        {
+            const int column =
+                zeros_left <= 6 ? zeros_left - 1 : 6;
+
+            const int maximum_run =
+                zeros_left < 14 ? zeros_left : 14;
+
+            for (int expected = 0; expected <= maximum_run; ++expected)
+            {
+                const char* encoded = codes[column][expected];
+
+                if (encoded == nullptr)
+                {
+                    std::cerr << "[FAIL] Code absent : zerosLeft="
+                              << zeros_left << " run=" << expected << '\n';
+                    return false;
+                }
+
+                const auto bytes = make_bits(encoded);
+                BitReader reader(bytes.data(), bytes.size());
+
+                uint8_t actual = 255;
+                std::string error;
+
+                if (!decode_run_before(
+                    reader,
+                    static_cast<uint8_t>(zeros_left),
+                    actual,
+                    error))
+                {
+                    std::cerr << "[FAIL] zerosLeft=" << zeros_left
+                              << " run=" << expected
+                              << " : " << error << '\n';
+                    return false;
+                }
+
+                if (actual != expected)
+                {
+                    std::cerr << "[FAIL] zerosLeft=" << zeros_left
+                              << " attendu=" << expected
+                              << " obtenu=" << unsigned(actual) << '\n';
+                    return false;
+                }
+            }
+
+            std::cout << "[PASS] run_before zerosLeft="
+                      << zeros_left << '\n';
+        }
+
+        return true;
+    }
+
+    bool check_run_before_invalid()
+    {
+        const uint8_t data = 0xFF;
+
+        for (uint8_t invalid : { uint8_t(0), uint8_t(16) })
+        {
+            BitReader reader(&data, 1);
+            uint8_t run = 255;
+            std::string error;
+
+            if (decode_run_before(reader, invalid, run, error))
+            {
+                std::cerr << "[FAIL] zerosLeft invalide accepte : "
+                          << unsigned(invalid) << '\n';
+                return false;
+            }
+        }
+
+        std::cout << "[PASS] zerosLeft invalides rejetes\n";
+        return true;
+    }
+
+    bool check_run_before_truncated()
+    {
+        const uint8_t data = 0x00;
+        BitReader reader(&data, 1);
+
+        uint8_t run = 255;
+        std::string error;
+
+        if (decode_run_before(reader, 7, run, error))
+        {
+            std::cerr << "[FAIL] Flux run_before tronque accepte\n";
+            return false;
+        }
+
+        std::cout << "[PASS] Flux run_before tronque rejete\n";
+        return true;
+    }
+    bool check_residual_block(
+        const std::string& name,
+        const std::string& encoded,
+        int nC,
+        const std::array<int32_t, 16>& expected)
+    {
+        const auto bytes = make_bits(encoded);
+        BitReader reader(bytes.data(), bytes.size());
+
+        std::array<int32_t, 16> actual{};
+        std::string error;
+
+        if (!decode_residual_block_4x4(
+            reader, nC, actual, error))
+        {
+            std::cerr << "[FAIL] " << name
+                      << " : " << error << '\n';
+            return false;
+        }
+
+        if (actual != expected)
+        {
+            std::cerr << "[FAIL] " << name
+                      << " : coefficients incorrect\n";
+
+            std::cerr << "Obtenu : ";
+            for (auto value : actual)
+                std::cerr << value << " ";
+
+            std::cerr << "\nAttendu : ";
+            for (auto value : expected)
+                std::cerr << value << " ";
+
+            std::cerr << '\n';
+            return false;
+        }
+
+        std::cout << "[PASS] " << name << '\n';
+        return true;
+    }
+
 }
 
 int main()
@@ -114,8 +446,105 @@ int main()
     run(check_invalid_context());
     run(check_invalid_fixed_code());
 
-    std::cout << "\nCAVLC tests: " << passed
+    run(check_levels(
+       "Level positif +2",
+       "0001011",
+       0,
+       { 2 }
+   ));
+
+   run(check_levels(
+       "Level negatif -2",
+       "00010101",
+       0,
+       { -2 }
+   ));
+
+   run(check_levels(
+       "Trailing one positif",
+       "010",
+       0,
+       { 1 }
+   ));
+
+   run(check_levels(
+       "Trailing one negatif",
+       "011",
+       0,
+       { -1 }
+   ));
+
+    run(check_levels(
+        "Deux niveaux +2 et -2",
+        "000001111011",
+        0,
+        { 2, -2 }
+    ));
+
+    run(check_levels(
+        "Trois niveaux avec trailing one",
+        "0000011001011",
+        0,
+        { 1, 2, -2 }
+    ));
+
+    run(check_levels(
+        "Augmentation suffix_length",
+        "0000011100001110",
+        0,
+        { 4, 2 }
+    ));
+
+    run(check_truncated_level());
+    run(check_total_zeros_tables());
+    run(check_total_zeros_full_block());
+    run(check_total_zeros_invalid());
+    run(check_run_before_tables());
+    run(check_run_before_invalid());
+    run(check_run_before_truncated());
+    std::array<int32_t, 16> expected_empty{};
+    run(check_residual_block(
+        "Bloc 4x4 vide",
+        "1",
+        0,
+        expected_empty
+    ));
+
+    std::array<int32_t, 16> expected_positive{};
+    expected_positive[1] = 2;
+
+    run(check_residual_block(
+        "Bloc 4x4 coefficient +2 position zigzag 1",
+        "0001011011",
+        0,
+        expected_positive
+    ));
+
+    std::array<int32_t, 16> expected_trailing_positive{};
+    expected_trailing_positive[1] = 1;
+
+    run(check_residual_block(
+        "Bloc 4x4 trailing one positif",
+        "010011",
+        0,
+        expected_trailing_positive
+    ));
+
+    std::array<int32_t, 16> expected_trailing_negative{};
+    expected_trailing_negative[1] = -1;
+
+    run(check_residual_block(
+        "Bloc 4x4 trailing one negatif",
+        "011011",
+        0,
+        expected_trailing_negative
+    ));
+   std::cout << "\nCAVLC tests: " << passed
               << " passed, " << failed << " failed.\n";
 
     return failed == 0 ? 0 : 1;
 }
+
+
+
+
