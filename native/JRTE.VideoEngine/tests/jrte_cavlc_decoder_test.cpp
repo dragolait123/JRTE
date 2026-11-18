@@ -56,6 +56,185 @@ namespace
         return true;
     }
 
+    constexpr uint8_t kExpected420Lengths[20] =
+    {
+        2,0,0,0, 6,1,0,0, 6,6,3,0, 6,7,7,6, 6,8,8,7
+    };
+
+    constexpr uint8_t kExpected420Codes[20] =
+    {
+        1,0,0,0, 7,1,0,0, 4,6,1,0, 3,3,2,5, 2,3,2,0
+    };
+
+    constexpr uint8_t kExpected422Lengths[36] =
+    {
+        1,0,0,0, 7,2,0,0, 7,7,3,0, 9,7,7,5,
+        9,9,7,6, 10,10,9,7, 11,11,10,7,
+        12,12,11,10, 13,12,12,11
+    };
+
+    constexpr uint8_t kExpected422Codes[36] =
+    {
+        1,0,0,0, 15,1,0,0, 14,13,1,0, 7,12,11,1,
+        6,5,10,1, 7,6,4,9, 7,6,5,8,
+        7,6,5,4, 7,5,4,4
+    };
+
+    bool check_chroma_table_exhaustive(
+        const std::string& name,
+        int nC,
+        const uint8_t* lengths,
+        const uint8_t* codes,
+        uint8_t max_total_coeff,
+        uint8_t max_code_length)
+    {
+        const uint32_t sequence_count = 1u << max_code_length;
+
+        uint32_t accepted_sequences = 0;
+        uint32_t rejected_sequences = 0;
+
+        for (uint32_t value = 0; value < sequence_count; ++value)
+        {
+            std::string encoded;
+            encoded.reserve(max_code_length);
+
+            for (int bit = max_code_length - 1; bit >= 0; --bit)
+            {
+                encoded.push_back(
+                    ((value >> bit) & 1u) ? '1' : '0'
+                );
+            }
+
+            bool expected_found = false;
+            uint8_t expected_total = 0;
+            uint8_t expected_trailing = 0;
+
+            for (uint8_t total = 0;
+                 total <= max_total_coeff;
+                 ++total)
+            {
+                const uint8_t max_trailing =
+                    total < 3 ? total : 3;
+
+                for (uint8_t trailing = 0;
+                     trailing <= max_trailing;
+                     ++trailing)
+                {
+                    const size_t index =
+                        static_cast<size_t>(total) * 4 + trailing;
+
+                    const uint8_t length = lengths[index];
+
+                    if (length == 0)
+                        continue;
+
+                    const uint32_t prefix =
+                        value >> (max_code_length - length);
+
+                    if (prefix == codes[index])
+                    {
+                        if (expected_found)
+                        {
+                            std::cerr
+                                << "[FAIL] Codes chroma ambigus : "
+                                << name << '\n';
+                            return false;
+                        }
+
+                        expected_found = true;
+                        expected_total = total;
+                        expected_trailing = trailing;
+                    }
+                }
+            }
+
+            const auto bytes = make_bits(encoded);
+
+            BitReader reader(bytes.data(), bytes.size());
+
+            CoeffToken token;
+            std::string error;
+
+            const bool decoded =
+                decode_coeff_token(reader, nC, token, error);
+
+            if (decoded != expected_found)
+            {
+                std::cerr
+                    << "[FAIL] " << name
+                    << " : résultat inattendu pour "
+                    << encoded
+                    << ", attendu=" << expected_found
+                    << ", obtenu=" << decoded
+                    << ", erreur=" << error << '\n';
+
+                return false;
+            }
+
+            if (expected_found)
+            {
+                if (token.total_coeff != expected_total ||
+                    token.trailing_ones != expected_trailing)
+                {
+                    std::cerr
+                        << "[FAIL] " << name
+                        << " : mauvais résultat pour "
+                        << encoded << '\n';
+
+                    return false;
+                }
+
+                ++accepted_sequences;
+            }
+            else
+            {
+                ++rejected_sequences;
+            }
+        }
+
+        std::cout
+            << "[PASS] " << name
+            << " : " << accepted_sequences
+            << " séquences acceptées, "
+            << rejected_sequences
+            << " rejetées, "
+            << sequence_count
+            << " vérifiées\n";
+
+        return true;
+    }
+
+    bool check_truncated_chroma_422()
+    {
+        const uint8_t data[] = { 0x00 };
+
+        BitReader reader(data, sizeof(data));
+
+        CoeffToken token;
+        std::string error;
+
+        if (decode_coeff_token(reader, -2, token, error))
+        {
+            std::cerr
+                << "[FAIL] Flux chroma 4:2:2 tronqué accepté\n";
+
+            return false;
+        }
+
+        if (error.find("Flux tronque") == std::string::npos)
+        {
+            std::cerr
+                << "[FAIL] Mauvaise erreur pour le flux chroma tronqué : "
+                << error << '\n';
+
+            return false;
+        }
+
+        std::cout
+            << "[PASS] Flux chroma 4:2:2 tronqué rejeté\n";
+
+        return true;
+    }
     bool check_invalid_context()
     {
         const uint8_t data[] = { 0xFF };
@@ -64,13 +243,13 @@ namespace
         CoeffToken token;
         std::string error;
 
-        if (decode_coeff_token(reader, -1, token, error))
+        if (decode_coeff_token(reader, -3, token, error))
         {
-            std::cerr << "[FAIL] contexte chroma non supporte accepte\n";
+            std::cerr << "[FAIL] contexte nC=-3 invalide accepte\n";
             return false;
         }
 
-        std::cout << "[PASS] contexte chroma non supporte rejete\n";
+        std::cout << "[PASS] contexte nC=-3 invalide rejete\n";
         return true;
     }
 
@@ -443,6 +622,29 @@ int main()
     run(check("Table nC 4-7 : bloc vide", "1111", 4, 0, 0));
     run(check("Table nC 8+ : bloc vide", "000011", 8, 0, 0));
     run(check("Table nC 8+ : trailing one", "000001", 8, 1, 1));
+    run(check("Chroma 4:2:0 : bloc vide", "01", -1, 0, 0));
+    run(check("Chroma 4:2:0 : trailing one", "1", -1, 1, 1));
+    run(check("Chroma 4:2:2 : bloc vide", "1", -2, 0, 0));
+    run(check("Chroma 4:2:2 : trailing one", "01", -2, 1, 1));
+    run(check_chroma_table_exhaustive(
+        "Chroma 4:2:0 exhaustif",
+        -1,
+        kExpected420Lengths,
+        kExpected420Codes,
+        4,
+        8
+    ));
+
+    run(check_chroma_table_exhaustive(
+        "Chroma 4:2:2 exhaustif",
+        -2,
+        kExpected422Lengths,
+        kExpected422Codes,
+        8,
+        13
+    ));
+
+    run(check_truncated_chroma_422());
     run(check_invalid_context());
     run(check_invalid_fixed_code());
 

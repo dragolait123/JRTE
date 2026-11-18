@@ -218,10 +218,45 @@ int main()
               output == expected,
               "Echappement avant octet 03");
     }
+    {
+        const uint8_t data[] = { 0xFF, 0xFF, 0xFF, 0xFF };
+        BitReader reader(data, sizeof(data));
+        uint32_t value = 0;
+
+        check(reader.read_bits(32, value) &&
+              value == 0xFFFFFFFF,
+              "Lecture de UINT32_MAX sur 32 bits");
+    }
+
+    {
+        const uint8_t data[] = { 0x80 };
+        BitReader reader(data, sizeof(data));
+        uint32_t value = 0;
+
+        check(!reader.read_bits(33, value) &&
+              !reader.good(),
+              "Rejet d'une lecture de 33 bits");
+    }
+
+    {
+        const uint8_t data[] = {
+            0x00, 0x00, 0x00, 0x01,
+            0xFF, 0xFF, 0xFF, 0xFC
+        };
+
+        BitReader reader(data, sizeof(data));
+        int32_t value = 0;
+
+        check(reader.read_se(value) && value == 2147483647,
+              "Exp-Golomb signe positif proche de INT32_MAX");
+    }
     std::cout << "\nResultat : "
               << failures << " echec(s)\n";
 
     return failures == 0 ? 0 : 1;
 }
+
+
+
 
 

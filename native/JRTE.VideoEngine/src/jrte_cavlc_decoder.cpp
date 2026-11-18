@@ -1,4 +1,4 @@
-﻿#include "jrte_cavlc_decoder.h"
+#include "jrte_cavlc_decoder.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -59,6 +59,30 @@ namespace jrte::h264
             }
         };
 
+        constexpr uint8_t kChroma420CoeffTokenLengths[20] =
+        {
+            2,0,0,0, 6,1,0,0, 6,6,3,0, 6,7,7,6, 6,8,8,7
+        };
+
+        constexpr uint8_t kChroma420CoeffTokenCodes[20] =
+        {
+            1,0,0,0, 7,1,0,0, 4,6,1,0, 3,3,2,5, 2,3,2,0
+        };
+
+        constexpr uint8_t kChroma422CoeffTokenLengths[36] =
+        {
+            1,0,0,0, 7,2,0,0, 7,7,3,0, 9,7,7,5,
+            9,9,7,6, 10,10,9,7, 11,11,10,7,
+            12,12,11,10, 13,12,12,11
+        };
+
+        constexpr uint8_t kChroma422CoeffTokenCodes[36] =
+        {
+            1,0,0,0, 15,1,0,0, 14,13,1,0, 7,12,11,1,
+            6,5,10,1, 7,6,4,9, 7,6,5,8,
+            7,6,5,4, 7,5,4,4
+        };
+
         bool decode_fixed_coeff_token(
             BitReader& bits,
             CoeffToken& result,
@@ -93,6 +117,57 @@ namespace jrte::h264
             result.trailing_ones = static_cast<uint8_t>(trailing_ones);
             return true;
         }
+
+        bool decode_chroma_dc_coeff_token(
+            BitReader& bits,
+            const uint8_t* lengths,
+            const uint8_t* codes,
+            uint8_t max_total_coeff,
+            uint8_t max_code_length,
+            CoeffToken& result,
+            std::string& error)
+        {
+            uint32_t code = 0;
+
+            for (uint8_t length = 1; length <= max_code_length; ++length)
+            {
+                uint32_t bit = 0;
+
+                if (!bits.read_bit(bit))
+                {
+                    error = "Flux tronque pendant le coeff_token chroma DC : "
+                        + bits.error();
+                    return false;
+                }
+
+                code = (code << 1) | bit;
+
+                for (uint8_t total = 0; total <= max_total_coeff; ++total)
+                {
+                    const uint8_t max_trailing =
+                        total < 3 ? total : 3;
+
+                    for (uint8_t trailing = 0;
+                         trailing <= max_trailing;
+                         ++trailing)
+                    {
+                        const size_t index =
+                            static_cast<size_t>(total) * 4 + trailing;
+
+                        if (lengths[index] == length &&
+                            codes[index] == code)
+                        {
+                            result.total_coeff = total;
+                            result.trailing_ones = trailing;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            error = "Code coeff_token chroma DC inconnu ou invalide.";
+            return false;
+        }
     }
 
     bool decode_coeff_token(
@@ -104,9 +179,9 @@ namespace jrte::h264
         result = {};
         error.clear();
 
-        if (nC < 0)
+        if (nC < -2)
         {
-            error = "Les contextes chroma DC nC=-1/-2 ne sont pas encore implementes.";
+            error = "Valeur nC invalide : valeurs inferieures a -2 interdites.";
             return false;
         }
 
@@ -120,6 +195,20 @@ namespace jrte::h264
         {
             error = "BitReader invalide : " + bits.error();
             return false;
+        }
+
+        if (nC == -1)
+        {
+            return decode_chroma_dc_coeff_token(
+                bits, kChroma420CoeffTokenLengths,
+                kChroma420CoeffTokenCodes, 4, 8, result, error);
+        }
+
+        if (nC == -2)
+        {
+            return decode_chroma_dc_coeff_token(
+                bits, kChroma422CoeffTokenLengths,
+                kChroma422CoeffTokenCodes, 8, 13, result, error);
         }
 
         if (nC >= 8)
@@ -136,8 +225,8 @@ namespace jrte::h264
 
             if (!bits.read_bit(bit))
             {
-                error = "Flux tronque pendant le coeff_token : " +
-                    bits.error();
+                error = "Flux tronque pendant le coeff_token : "
+                    + bits.error();
                 return false;
             }
 
@@ -241,7 +330,6 @@ namespace jrte::h264
         std::vector<int32_t> decoded;
         decoded.reserve(token.total_coeff);
 
-        // Decoder les trailing ones et leurs signes.
         for (uint8_t i = 0; i < token.trailing_ones; ++i)
         {
             uint32_t sign = 0;
@@ -256,13 +344,9 @@ namespace jrte::h264
             decoded.push_back(sign ? -1 : 1);
         }
 
-        // Initialiser suffixLength selon H.264, section 9.2.2.
         uint32_t suffix_length =
-            (token.total_coeff > 10 && token.trailing_ones < 3)
-                ? 1u
-                : 0u;
+            (token.total_coeff > 10 && token.trailing_ones < 3) ? 1u : 0u;
 
-        // Decoder les niveaux restants.
         for (uint8_t i = token.trailing_ones;
              i < token.total_coeff;
              ++i)
@@ -270,7 +354,6 @@ namespace jrte::h264
             uint32_t level_prefix = 0;
             uint32_t bit = 0;
 
-            // level_prefix : compter les zeros jusqu'au premier 1.
             while (true)
             {
                 if (!bits.read_bit(bit))
@@ -285,7 +368,6 @@ namespace jrte::h264
 
                 ++level_prefix;
 
-                // Limite de prefix valide pour ce decodeur.
                 if (level_prefix > 28)
                 {
                     error = "level_prefix invalide ou trop grand.";
@@ -293,17 +375,12 @@ namespace jrte::h264
                 }
             }
 
-            // Calcul de levelSuffixSize.
             uint32_t suffix_size = suffix_length;
 
             if (level_prefix == 14 && suffix_length == 0)
-            {
                 suffix_size = 4;
-            }
             else if (level_prefix >= 15)
-            {
                 suffix_size = level_prefix - 3;
-            }
 
             if (suffix_size > 25)
             {
@@ -321,8 +398,6 @@ namespace jrte::h264
                 return false;
             }
 
-            // levelCode = (Min(15, level_prefix) << suffixLength)
-            //             + level_suffix.
             const uint64_t prefix_value =
                 level_prefix < 15 ? level_prefix : 15;
 
@@ -330,9 +405,7 @@ namespace jrte::h264
                 (prefix_value << suffix_length) + level_suffix;
 
             if (level_prefix >= 15 && suffix_length == 0)
-            {
                 level_code += 15;
-            }
 
             if (level_prefix >= 16)
             {
@@ -340,26 +413,18 @@ namespace jrte::h264
                     (uint64_t(1) << (level_prefix - 3)) - 4096;
             }
 
-            // Correction du premier niveau non-trailing.
             if (i == token.trailing_ones &&
                 token.trailing_ones < 3)
             {
                 level_code += 2;
             }
 
-            // Conversion levelCode vers levelVal signe.
             int64_t signed_level = 0;
 
             if ((level_code & 1u) == 0)
-            {
-                signed_level =
-                    static_cast<int64_t>((level_code + 2) / 2);
-            }
+                signed_level = static_cast<int64_t>((level_code + 2) / 2);
             else
-            {
-                signed_level =
-                    -static_cast<int64_t>((level_code + 1) / 2);
-            }
+                signed_level = -static_cast<int64_t>((level_code + 1) / 2);
 
             if (signed_level < std::numeric_limits<int32_t>::min() ||
                 signed_level > std::numeric_limits<int32_t>::max())
@@ -370,11 +435,8 @@ namespace jrte::h264
 
             decoded.push_back(static_cast<int32_t>(signed_level));
 
-            // Mise a jour de suffixLength.
             if (suffix_length == 0)
-            {
                 suffix_length = 1;
-            }
 
             const uint64_t threshold =
                 uint64_t(3) << (suffix_length - 1);
@@ -385,9 +447,7 @@ namespace jrte::h264
                     : static_cast<uint64_t>(signed_level);
 
             if (magnitude > threshold && suffix_length < 6)
-            {
                 ++suffix_length;
-            }
         }
 
         levels = std::move(decoded);
@@ -418,71 +478,57 @@ namespace jrte::h264
             return false;
         }
 
-        // Lorsque les 16 coefficients sont non nuls,
-        // total_zeros n'est pas present dans le flux.
         if (total_coeff == 16)
             return true;
 
-        // Tables H.264 9-7 et 9-8.
-        // Index de colonne : total_zeros.
-        // Index de ligne : TotalCoeff - 1.
         static const char* const codes[15][16] =
         {
             {
-                "1", "011", "010", "0011",
-                "0010", "00011", "00010", "000011",
-                "000010", "0000011", "0000010",
-                "00000011", "00000010", "000000011",
-                "000000010", "000000001"
+                "1", "011", "010", "0011", "0010", "00011",
+                "00010", "000011", "000010", "0000011",
+                "0000010", "00000011", "00000010",
+                "000000011", "000000010", "000000001"
             },
             {
-                "111", "110", "101", "100",
-                "011", "0101", "0100", "0011",
-                "0010", "00011", "00010", "000011",
-                "000010", "000001", "000000"
+                "111", "110", "101", "100", "011", "0101",
+                "0100", "0011", "0010", "00011", "00010",
+                "000011", "000010", "000001", "000000"
             },
             {
-                "0101", "111", "110", "101",
-                "0100", "0011", "100", "011",
-                "0010", "00011", "00010", "000001",
-                "00001", "000000"
+                "0101", "111", "110", "101", "0100", "0011",
+                "100", "011", "0010", "00011", "00010",
+                "000001", "00001", "000000"
             },
             {
-                "00011", "111", "0101", "0100",
-                "110", "101", "100", "0011",
-                "011", "0010", "00010", "00001",
-                "00000"
+                "00011", "111", "0101", "0100", "110", "101",
+                "100", "0011", "011", "0010", "00010",
+                "00001", "00000"
             },
             {
-                "0101", "0100", "0011", "111",
-                "110", "101", "100", "011",
-                "0010", "00001", "0001", "00000"
+                "0101", "0100", "0011", "111", "110", "101",
+                "100", "011", "0010", "00001", "0001", "00000"
             },
             {
-                "000001", "00001", "111", "110",
-                "101", "100", "011", "010",
-                "0001", "001", "000000"
+                "000001", "00001", "111", "110", "101", "100",
+                "011", "010", "0001", "001", "000000"
             },
             {
-                "000001", "00001", "101", "100",
-                "011", "11", "010", "0001",
-                "001", "000000"
+                "000001", "00001", "101", "100", "011", "11",
+                "010", "0001", "001", "000000"
             },
             {
-                "000001", "0001", "00001", "011",
-                "11", "10", "010", "001", "000000"
+                "000001", "0001", "00001", "011", "11", "10",
+                "010", "001", "000000"
             },
             {
-                "000001", "000000", "0001", "11",
-                "10", "001", "01", "00001"
+                "000001", "000000", "0001", "11", "10", "001",
+                "01", "00001"
             },
             {
-                "00001", "00000", "001", "11",
-                "10", "01", "0001"
+                "00001", "00000", "001", "11", "10", "01", "0001"
             },
             {
-                "0000", "0001", "001", "010",
-                "1", "011"
+                "0000", "0001", "001", "010", "1", "011"
             },
             {
                 "0000", "0001", "01", "1", "001"
@@ -504,7 +550,6 @@ namespace jrte::h264
         std::string candidate;
         candidate.reserve(9);
 
-        // Les mots de code de ces tables ont au maximum 9 bits.
         for (uint32_t length = 1; length <= 9; ++length)
         {
             uint32_t bit = 0;
@@ -527,7 +572,6 @@ namespace jrte::h264
 
                 if (candidate == expected)
                 {
-                    // Validation de la plage normative.
                     if (value > 16 - total_coeff)
                     {
                         error = "total_zeros depasse la plage autorisee.";
@@ -568,29 +612,14 @@ namespace jrte::h264
             return false;
         }
 
-        // Table 9-10 H.264.
-        // Colonnes : zerosLeft = 1, 2, 3, 4, 5, 6, >6.
-        // Lignes : run_before = 0 a 14.
         static const char* codes[7][15] =
         {
-            {
-                "1", "0"
-            },
-            {
-                "1", "01", "00"
-            },
-            {
-                "11", "10", "01", "00"
-            },
-            {
-                "11", "10", "01", "001", "000"
-            },
-            {
-                "11", "10", "011", "010", "001", "000"
-            },
-            {
-                "11", "000", "001", "011", "010", "101", "100"
-            },
+            {"1", "0"},
+            {"1", "01", "00"},
+            {"11", "10", "01", "00"},
+            {"11", "10", "01", "001", "000"},
+            {"11", "10", "011", "010", "001", "000"},
+            {"11", "000", "001", "011", "010", "101", "100"},
             {
                 "111", "110", "101", "100", "011",
                 "010", "001", "0001", "00001", "000001",
@@ -638,8 +667,6 @@ namespace jrte::h264
     }
 }
 
-
-
 namespace jrte::h264
 {
     bool decode_residual_block_4x4(
@@ -651,24 +678,26 @@ namespace jrte::h264
         coefficients.fill(0);
         error.clear();
 
-        // Ordre zigzag 4x4 defini par H.264.
+        if (nC < 0)
+        {
+            error = "Le decodage complet des blocs chroma DC "
+                "n'est pas encore pris en charge.";
+            return false;
+        }
+
         static constexpr uint8_t scan[16] =
         {
-            0, 1, 4, 8,
-            5, 2, 3, 6,
-            9, 12, 13, 10,
-            7, 11, 14, 15
+            0, 1, 4, 8, 5, 2, 3, 6,
+            9, 12, 13, 10, 7, 11, 14, 15
         };
 
         std::array<int32_t, 16> decoded_block{};
 
-        // 1. Decoder coeff_token.
         CoeffToken token;
 
         if (!decode_coeff_token(bits, nC, token, error))
             return false;
 
-        // Bloc vide : aucun autre element syntaxique.
         if (token.total_coeff == 0)
         {
             coefficients = decoded_block;
@@ -681,7 +710,6 @@ namespace jrte::h264
             return false;
         }
 
-        // 2. Decoder les niveaux.
         std::vector<int32_t> levels;
 
         if (!decode_level_values(bits, token, levels, error))
@@ -693,7 +721,6 @@ namespace jrte::h264
             return false;
         }
 
-        // 3. Decoder total_zeros.
         uint8_t total_zeros = 0;
 
         if (token.total_coeff < 16)
@@ -714,7 +741,6 @@ namespace jrte::h264
             return false;
         }
 
-        // 4. Reconstruire les run_before.
         std::array<uint8_t, 16> runs{};
         uint8_t zeros_left = total_zeros;
 
@@ -746,10 +772,8 @@ namespace jrte::h264
             );
         }
 
-        // Le dernier run contient les zeros restants.
         runs[token.total_coeff - 1] = zeros_left;
 
-        // 5. Placer les coefficients dans le balayage zigzag.
         int coefficient_number = -1;
 
         for (int i = static_cast<int>(token.total_coeff) - 1;
@@ -771,5 +795,130 @@ namespace jrte::h264
 
         coefficients = decoded_block;
         return true;
+    }
+
+    bool decode_chroma_dc_total_zeros(
+        BitReader& bits,
+        uint8_t total_coeff,
+        uint8_t max_num_coeff,
+        uint8_t& total_zeros,
+        std::string& error)
+    {
+        total_zeros = 0;
+        error.clear();
+
+        if (max_num_coeff != 4 && max_num_coeff != 8)
+        {
+            error = "Format chroma DC invalide.";
+            return false;
+        }
+
+        if (total_coeff == 0 || total_coeff > max_num_coeff)
+        {
+            error = "TotalCoeff invalide pour chroma DC total_zeros.";
+            return false;
+        }
+
+        if (!bits.good())
+        {
+            error = "BitReader invalide : " + bits.error();
+            return false;
+        }
+
+        if (total_coeff == max_num_coeff)
+            return true;
+
+        static const char* const codes420[4][4] =
+        {
+            { "1", "01", "001", "000" },
+            { "1", "01", "00", nullptr },
+            { "1", "0", nullptr, nullptr },
+            { nullptr, nullptr, nullptr, nullptr }
+        };
+
+        static const char* const codes422[8][8] =
+        {
+            { "1", "010", "011", "0010", "0011", "0001", "00001", "00000" },
+            { "000", "01", "001", "100", "101", "110", "111", nullptr },
+            { "000", "001", "01", "10", "110", "111", nullptr, nullptr },
+            { "110", "00", "01", "10", "111", nullptr, nullptr, nullptr },
+            { "00", "01", "10", "11", nullptr, nullptr, nullptr, nullptr },
+            { "00", "01", "1", nullptr, nullptr, nullptr, nullptr, nullptr },
+            { "0", "1", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr },
+            { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr }
+        };
+
+        const uint32_t table_index =
+            static_cast<uint32_t>(total_coeff - 1);
+
+        const uint32_t max_zeros =
+            static_cast<uint32_t>(max_num_coeff - total_coeff);
+
+        const char* const (*table)[8] = nullptr;
+
+        if (max_num_coeff == 4)
+        {
+            // Les tables 4:2:0 ont quatre colonnes.
+            std::string candidate;
+            candidate.reserve(3);
+
+            for (uint32_t length = 1; length <= 3; ++length)
+            {
+                uint32_t bit = 0;
+
+                if (!bits.read_bit(bit))
+                {
+                    error = "Flux tronque pendant chroma DC total_zeros : "
+                        + bits.error();
+                    return false;
+                }
+
+                candidate.push_back(bit ? '1' : '0');
+
+                for (uint32_t value = 0; value <= max_zeros; ++value)
+                {
+                    const char* expected = codes420[table_index][value];
+
+                    if (expected != nullptr && candidate == expected)
+                    {
+                        total_zeros = static_cast<uint8_t>(value);
+                        return true;
+                    }
+                }
+            }
+        }
+        else
+        {
+            std::string candidate;
+            candidate.reserve(5);
+
+            for (uint32_t length = 1; length <= 5; ++length)
+            {
+                uint32_t bit = 0;
+
+                if (!bits.read_bit(bit))
+                {
+                    error = "Flux tronque pendant chroma DC total_zeros : "
+                        + bits.error();
+                    return false;
+                }
+
+                candidate.push_back(bit ? '1' : '0');
+
+                for (uint32_t value = 0; value <= max_zeros; ++value)
+                {
+                    const char* expected = codes422[table_index][value];
+
+                    if (expected != nullptr && candidate == expected)
+                    {
+                        total_zeros = static_cast<uint8_t>(value);
+                        return true;
+                    }
+                }
+            }
+        }
+
+        error = "Code chroma DC total_zeros inconnu ou invalide.";
+        return false;
     }
 }

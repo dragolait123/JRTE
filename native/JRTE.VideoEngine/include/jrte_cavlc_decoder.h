@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <array>
 #include <cstdint>
@@ -39,6 +39,14 @@ namespace jrte::h264
     bool decode_total_zeros(
         BitReader& bits,
         uint8_t total_coeff,
+        uint8_t& total_zeros,
+        std::string& error
+    );
+
+    bool decode_chroma_dc_total_zeros(
+        BitReader& bits,
+        uint8_t total_coeff,
+        uint8_t max_num_coeff,
         uint8_t& total_zeros,
         std::string& error
     );
