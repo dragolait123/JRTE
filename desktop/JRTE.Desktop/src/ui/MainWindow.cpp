@@ -9,6 +9,7 @@
 #include <QWidget>
 #include <QFileDialog>
 #include <QStatusBar>
+#include <QMessageBox>
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent),
@@ -21,7 +22,7 @@ MainWindow::MainWindow(QWidget* parent)
     auto* central = new QWidget(this);
     auto* mainLayout = new QVBoxLayout(central);
 
-    auto* header = new QLabel("JRTE  |  NATIVE VIDEO PLAYER", central);
+    auto* header = new QLabel("JRTE | NATIVE VIDEO PLAYER", central);
     header->setStyleSheet(
         "font-size: 20px; font-weight: bold; color: #65B5FF;"
         "padding: 12px;"
@@ -31,8 +32,9 @@ MainWindow::MainWindow(QWidget* parent)
 
     videoWidget = new VideoWidget(central);
     diagnosticsPanel = new DiagnosticsPanel(central);
-    diagnosticsPanel->setMinimumWidth(230);
-    diagnosticsPanel->setMaximumWidth(300);
+
+    diagnosticsPanel->setMinimumWidth(280);
+    diagnosticsPanel->setMaximumWidth(420);
 
     content->addWidget(videoWidget, 1);
     content->addWidget(diagnosticsPanel);
@@ -54,24 +56,12 @@ MainWindow::MainWindow(QWidget* parent)
 
     setCentralWidget(central);
 
-    connect(openButton, &QPushButton::clicked, this, [this]() {
-        const QString file = QFileDialog::getOpenFileName(
-            this,
-            "Ouvrir une vidéo",
-            QString(),
-            "Vidéos (*.mp4 *.h264 *.264);;Tous les fichiers (*.*)"
-        );
-
-        if (!file.isEmpty()) {
-            statusBar()->showMessage(
-                "Fichier sélectionné : " + file
-            );
-        }
-    });
+    connect(openButton, &QPushButton::clicked,
+            this, &MainWindow::openVideo);
 
     connect(playButton, &QPushButton::clicked, this, [this]() {
         statusBar()->showMessage(
-            "Le moteur natif doit encore être connecté."
+            "Analyse native disponible. Décodage vidéo à intégrer."
         );
     });
 
@@ -86,5 +76,61 @@ MainWindow::MainWindow(QWidget* parent)
         "QPushButton:hover { background: #365579; }"
     );
 
-    statusBar()->showMessage("JRTE Desktop initialisé.");
+    const bool loaded = engine.load();
+
+    if (loaded && engine.initialize())
+    {
+        diagnosticsPanel->setStatus(
+            "Moteur : " + engine.engineName() + " — actif"
+        );
+        statusBar()->showMessage("Moteur natif JRTE initialisé.");
+    }
+    else
+    {
+        const QString message = engine.lastError();
+
+        diagnosticsPanel->setStatus("Moteur : erreur de chargement");
+        diagnosticsPanel->setReport(message);
+
+        statusBar()->showMessage("Impossible d'initialiser le moteur natif.");
+    }
+}
+
+void MainWindow::openVideo()
+{
+    const QString file = QFileDialog::getOpenFileName(
+        this,
+        "Ouvrir une vidéo",
+        QString(),
+        "Vidéos MP4 (*.mp4);;Tous les fichiers (*.*)"
+    );
+
+    if (file.isEmpty())
+        return;
+
+    if (!engine.isInitialized())
+    {
+        QMessageBox::critical(
+            this,
+            "Moteur JRTE",
+            engine.lastError()
+        );
+        return;
+    }
+
+    statusBar()->showMessage("Analyse MP4 en cours...");
+
+    const QString report = engine.inspectMp4(file);
+
+    if (report.isEmpty())
+    {
+        diagnosticsPanel->setReport(engine.lastError());
+        statusBar()->showMessage("Échec de l'analyse MP4.");
+        return;
+    }
+
+    diagnosticsPanel->setReport(report);
+    diagnosticsPanel->setStatus("Moteur : actif — analyse terminée");
+
+    statusBar()->showMessage("Analyse MP4 terminée.");
 }

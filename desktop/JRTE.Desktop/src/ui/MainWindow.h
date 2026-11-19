@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <QMainWindow>
+#include "../engine/NativeVideoEngine.h"
 
 class VideoWidget;
 class DiagnosticsPanel;
@@ -13,6 +14,10 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
 
 private:
+    void openVideo();
+
     VideoWidget* videoWidget;
     DiagnosticsPanel* diagnosticsPanel;
+
+    NativeVideoEngine engine;
 };

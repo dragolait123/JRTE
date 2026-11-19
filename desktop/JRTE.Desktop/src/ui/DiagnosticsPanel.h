@@ -11,6 +11,10 @@ class DiagnosticsPanel final : public QWidget
 public:
     explicit DiagnosticsPanel(QWidget* parent = nullptr);
 
+    void setReport(const QString& report);
+    void setStatus(const QString& status);
+
 private:
     QLabel* statusLabel;
+    QLabel* reportLabel;
 };

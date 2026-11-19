@@ -1,0 +1,3158 @@
+=== JRTE H264 DECODER AUDIT ===
+
+===== include\jrte_api.h =====
+#pragma once
+
+#include <stdint.h>
+
+#ifdef _WIN32
+    #ifdef JRTE_ENGINE_EXPORTS
+        #define JRTE_API __declspec(dllexport)
+    #else
+        #define JRTE_API __declspec(dllimport)
+    #endif
+#else
+    #define JRTE_API __attribute__((visibility("default")))
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+JRTE_API int32_t jrte_mp4_inspect(
+    const char* utf8_path,
+    char* output,
+    uint32_t output_capacity
+);
+
+JRTE_API int32_t jrte_mp4_extract_video_sample(
+    const char* utf8_path,
+    uint32_t sample_index,
+    unsigned char* output,
+    uint32_t output_capacity,
+    uint32_t* bytes_written
+);
+
+JRTE_API int32_t jrte_mp4_get_video_sample_count(
+    const char* utf8_path,
+    uint32_t* sample_count
+);
+JRTE_API int32_t jrte_mp4_get_avc_configuration(
+    const char* utf8_path,
+    uint32_t sample_index,
+    char* output,
+    uint32_t output_capacity
+);
+
+JRTE_API int32_t jrte_mp4_analyze_video_sample(
+    const char* utf8_path,
+    uint32_t sample_index,
+    char* output,
+    uint32_t output_capacity
+);
+JRTE_API uint32_t jrte_get_api_version();
+
+JRTE_API const char* jrte_get_engine_name();
+
+JRTE_API int32_t jrte_initialize();
+
+JRTE_API void jrte_shutdown();
+
+JRTE_API int32_t jrte_mp4_analyze_all_video_samples(
+    const char* utf8_path,
+    char* output,
+    uint32_t output_capacity
+);
+#ifdef __cplusplus
+}
+#endif
+
+
+
+===== include\jrte_bit_reader.h =====
+#pragma once
+
+#include <cstdint>
+#include <cstddef>
+#include <string>
+#include <vector>
+
+namespace jrte::h264
+{
+    bool ebsp_to_rbsp(
+        const uint8_t* input,
+        size_t input_size,
+        std::vector<uint8_t>& output,
+        std::string& error
+    );
+
+    class BitReader
+    {
+    public:
+        BitReader(const uint8_t* data, size_t size);
+
+        bool read_bit(uint32_t& value);
+        bool read_bits(uint32_t count, uint32_t& value);
+        bool read_ue(uint32_t& value);
+        bool read_se(int32_t& value);
+
+        size_t bits_remaining() const;
+        bool good() const;
+        const std::string& error() const;
+
+    private:
+        const uint8_t* data_;
+        size_t size_;
+        size_t bit_position_;
+        size_t total_bits_;
+        bool valid_;
+        std::string error_;
+
+        bool fail(const std::string& message);
+    };
+}
+
+
+===== include\jrte_sps_parser.h =====
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace jrte::h264
+{
+    struct SpsInfo
+    {
+        bool valid = false;
+
+        uint32_t profile_idc = 0;
+        uint32_t level_idc = 0;
+        uint32_t sps_id = 0;
+
+    // Parametres necessaires au DPB H.264.
+    uint32_t log2_max_frame_num = 4;
+    uint32_t pic_order_cnt_type = 0;
+    uint32_t log2_max_pic_order_cnt_lsb = 4;
+
+    bool delta_pic_order_always_zero = false;
+    int32_t offset_for_non_ref_pic = 0;
+    int32_t offset_for_top_to_bottom_field = 0;
+    std::vector<int32_t> offset_for_ref_frame;
+
+    uint32_t max_num_ref_frames = 0;
+    bool gaps_in_frame_num_allowed = false;
+        uint32_t chroma_format_idc = 1;
+        uint32_t bit_depth_luma = 8;
+        uint32_t bit_depth_chroma = 8;
+
+        bool separate_colour_plane = false;
+        bool mb_adaptive_frame_field = false;
+        bool direct_8x8_inference = false;
+        uint32_t width_in_mbs = 0;
+        uint32_t height_in_map_units = 0;
+
+        uint32_t width = 0;
+        uint32_t height = 0;
+
+        bool frame_mbs_only = true;
+        bool frame_cropping = false;
+
+        uint32_t crop_left = 0;
+        uint32_t crop_right = 0;
+        uint32_t crop_top = 0;
+        uint32_t crop_bottom = 0;
+
+        std::string error;
+    };
+
+    // Accepte une unite NAL SPS complete, avec son octet d'en-tete.
+    SpsInfo parse_sps(const uint8_t* nal, uint32_t nal_size);
+}
+
+
+
+===== include\jrte_pps_parser.h =====
+#pragma once
+
+#include <cstdint>
+#include <string>
+
+namespace jrte::h264
+{
+    struct PpsInfo
+    {
+        bool valid = false;
+
+        uint32_t pps_id = 0;
+        uint32_t sps_id = 0;
+
+        bool entropy_coding_mode = false;
+        bool bottom_field_pic_order_in_frame_present = false;
+
+        uint32_t num_slice_groups = 1;
+        uint32_t slice_group_map_type = 0;
+
+        bool slice_group_change_direction = false;
+        uint32_t slice_group_change_rate = 1;
+        uint32_t num_ref_idx_l0_default_active = 1;
+        uint32_t num_ref_idx_l1_default_active = 1;
+
+        bool weighted_pred = false;
+        uint32_t weighted_bipred_idc = 0;
+
+        int32_t pic_init_qp_minus26 = 0;
+        int32_t pic_init_qs_minus26 = 0;
+        int32_t chroma_qp_index_offset = 0;
+
+        bool deblocking_filter_control_present = false;
+        bool constrained_intra_pred = false;
+        bool redundant_pic_cnt_present = false;
+
+        std::string error;
+    };
+
+    // Accepte une unite NAL PPS complete, avec son octet d'en-tete.
+    PpsInfo parse_pps(const uint8_t* nal, uint32_t nal_size);
+}
+
+
+===== include\jrte_slice_parser.h =====
+#pragma once
+
+#include <cstdint>
+#include <cstddef>
+#include <string>
+
+#include "jrte_sps_parser.h"
+#include "jrte_pps_parser.h"
+
+namespace jrte::h264
+{
+    struct SliceInfo
+    {
+        bool valid = false;
+        bool core_header_complete = false;
+
+        uint32_t nal_type = 0;
+        uint32_t nal_ref_idc = 0;
+
+        uint32_t first_mb_in_slice = 0;
+        uint32_t slice_type = 0;
+        uint32_t pic_parameter_set_id = 0;
+        std::string slice_type_name;
+
+        uint32_t colour_plane_id = 0;
+        uint32_t frame_num = 0;
+        bool field_pic_flag = false;
+        bool bottom_field_flag = false;
+        uint32_t idr_pic_id = 0;
+
+        uint32_t pic_order_cnt_lsb = 0;
+        int32_t delta_pic_order_cnt_bottom = 0;
+        int32_t delta_pic_order_cnt0 = 0;
+        int32_t delta_pic_order_cnt1 = 0;
+
+        uint32_t redundant_pic_cnt = 0;
+
+        bool direct_spatial_mv_pred_flag = false;
+
+        bool num_ref_idx_active_override_flag = false;
+        uint32_t num_ref_idx_l0_active_minus1 = 0;
+        uint32_t num_ref_idx_l1_active_minus1 = 0;
+
+        uint32_t effective_num_ref_idx_l0 = 0;
+        uint32_t effective_num_ref_idx_l1 = 0;
+
+        bool ref_pic_list_modification_flag_l0 = false;
+        bool ref_pic_list_modification_flag_l1 = false;
+
+        bool no_output_of_prior_pics_flag = false;
+        bool long_term_reference_flag = false;
+        bool adaptive_ref_pic_marking_mode_flag = false;
+
+        uint32_t cabac_init_idc = 0;
+        bool cabac_alignment_valid = false;
+        size_t cabac_data_bit_offset = 0;
+        size_t cabac_data_byte_offset = 0;
+
+        int32_t slice_qp_delta = 0;
+        bool sp_for_switch_flag = false;
+        int32_t slice_qs_delta = 0;
+
+        uint32_t disable_deblocking_filter_idc = 0;
+        int32_t slice_alpha_c0_offset_div2 = 0;
+        int32_t slice_beta_offset_div2 = 0;
+
+        uint32_t slice_group_change_cycle = 0;
+
+        std::string error;
+    };
+
+    SliceInfo parse_slice_header(
+        const uint8_t* nal,
+        uint32_t nal_size
+    );
+
+    SliceInfo parse_slice_header(
+        const uint8_t* nal,
+        uint32_t nal_size,
+        const SpsInfo& sps,
+        const PpsInfo& pps
+    );
+}
+
+===== include\jrte_cavlc_decoder.h =====
+#pragma once
+
+#include <array>
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "jrte_bit_reader.h"
+
+namespace jrte::h264
+{
+    struct CoeffToken
+    {
+        uint8_t total_coeff = 0;
+        uint8_t trailing_ones = 0;
+    };
+
+    bool decode_coeff_token(
+        BitReader& bits,
+        int nC,
+        CoeffToken& result,
+        std::string& error
+    );
+
+    bool decode_trailing_one_signs(
+        BitReader& bits,
+        uint8_t trailing_ones,
+        std::vector<int8_t>& levels,
+        std::string& error
+    );
+
+    bool decode_level_values(
+        BitReader& bits,
+        const CoeffToken& token,
+        std::vector<int32_t>& levels,
+        std::string& error
+    );
+
+    bool decode_total_zeros(
+        BitReader& bits,
+        uint8_t total_coeff,
+        uint8_t& total_zeros,
+        std::string& error
+    );
+
+    bool decode_chroma_dc_total_zeros(
+        BitReader& bits,
+        uint8_t total_coeff,
+        uint8_t max_num_coeff,
+        uint8_t& total_zeros,
+        std::string& error
+    );
+    bool decode_run_before(
+        BitReader& bits,
+        uint8_t zeros_left,
+        uint8_t& run_before,
+        std::string& error
+    );
+    // Decode un bloc CAVLC 4x4 complet en ordre matriciel.
+    bool decode_residual_block_4x4(
+        BitReader& bits,
+        int nC,
+        std::array<int32_t, 16>& coefficients,
+        std::string& error
+    );
+}
+
+
+===== include\jrte_macroblock_decoder.h =====
+#pragma once
+
+#include <array>
+#include <cstdint>
+#include <string>
+
+#include "jrte_bit_reader.h"
+
+namespace jrte::h264
+{
+    struct NeighborCoeffInfo
+    {
+        bool left_available = false;
+        bool top_available = false;
+
+        uint8_t left_total_coeff = 0;
+        uint8_t top_total_coeff = 0;
+    };
+
+    bool derive_nc(
+        const NeighborCoeffInfo& neighbors,
+        int& nc,
+        std::string& error
+    );
+
+    bool decode_macroblock_residual_block(
+        BitReader& reader,
+        const NeighborCoeffInfo& neighbors,
+        std::array<int32_t, 16>& coefficients,
+        uint8_t& total_coeff,
+        std::string& error
+    );
+}
+
+===== include\jrte_block_coeff_context.h =====
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "jrte_macroblock_decoder.h"
+
+namespace jrte::h264
+{
+    class BlockCoeffContext
+    {
+    public:
+        bool reset(
+            uint32_t width,
+            uint32_t height,
+            std::string& error
+        );
+
+        bool record_block(
+            uint32_t x,
+            uint32_t y,
+            uint8_t total_coeff,
+            std::string& error
+        );
+
+        bool get_neighbor_info(
+            uint32_t x,
+            uint32_t y,
+            NeighborCoeffInfo& neighbors,
+            std::string& error
+        ) const;
+
+        bool decode_block(
+            uint32_t x,
+            uint32_t y,
+            BitReader& reader,
+            std::array<int32_t, 16>& coefficients,
+            std::string& error
+        );
+        uint32_t width() const;
+        uint32_t height() const;
+
+    private:
+        uint32_t width_ = 0;
+        uint32_t height_ = 0;
+
+        std::vector<uint8_t> total_coeff_;
+        std::vector<uint8_t> decoded_;
+
+        size_t index(uint32_t x, uint32_t y) const;
+    };
+}
+
+
+
+===== src\jrte_bit_reader.cpp =====
+#include "jrte_bit_reader.h"
+
+#include <limits>
+
+namespace jrte::h264
+{
+    bool ebsp_to_rbsp(
+        const uint8_t* input,
+        size_t input_size,
+        std::vector<uint8_t>& output,
+        std::string& error)
+    {
+        output.clear();
+        error.clear();
+
+        if (input == nullptr && input_size != 0)
+        {
+            error = "Pointeur EBSP invalide.";
+            return false;
+        }
+
+        unsigned int zero_count = 0;
+
+        for (size_t i = 0; i < input_size; ++i)
+        {
+            const uint8_t byte = input[i];
+
+            // Retirer uniquement un véritable octet
+            // emulation_prevention_three_byte.
+            if (zero_count >= 2 && byte == 0x03 &&
+                i + 1 < input_size &&
+                input[i + 1] <= 0x03)
+            {
+                // L'octet 03 est retire.
+                // Recommencer le comptage pour les octets suivants.
+                zero_count = 0;
+                continue;
+            }
+
+            // Sinon, le byte 03 est conserve comme donnee.
+            output.push_back(byte);
+
+            if (byte == 0x00)
+                ++zero_count;
+            else
+                zero_count = 0;
+        }
+
+        return true;
+    }
+
+    BitReader::BitReader(const uint8_t* data, size_t size)
+        : data_(data),
+          size_(size),
+          bit_position_(0),
+          total_bits_(0),
+          valid_(data != nullptr || size == 0)
+    {
+        if (!valid_)
+        {
+            error_ = "Pointeur de donnees invalide.";
+            return;
+        }
+
+        if (size_ > std::numeric_limits<size_t>::max() / 8)
+        {
+            valid_ = false;
+            error_ = "Taille du flux trop grande.";
+            return;
+        }
+
+        total_bits_ = size_ * 8;
+    }
+
+    bool BitReader::fail(const std::string& message)
+    {
+        valid_ = false;
+        error_ = message;
+        return false;
+    }
+
+    bool BitReader::read_bit(uint32_t& value)
+    {
+        value = 0;
+
+        if (!valid_)
+            return false;
+
+        if (bit_position_ >= total_bits_)
+            return fail("Fin du flux de bits.");
+
+        const size_t byte_index = bit_position_ / 8;
+        const uint32_t bit_index =
+            7 - static_cast<uint32_t>(bit_position_ % 8);
+
+        value = (data_[byte_index] >> bit_index) & 1;
+        ++bit_position_;
+
+        return true;
+    }
+
+    bool BitReader::read_bits(uint32_t count, uint32_t& value)
+    {
+        value = 0;
+
+        if (!valid_)
+            return false;
+
+        if (count > 32)
+            return fail("Lecture superieure a 32 bits.");
+
+        if (count > bits_remaining())
+            return fail("Pas assez de bits disponibles.");
+
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            uint32_t bit = 0;
+
+            if (!read_bit(bit))
+                return false;
+
+            value = (value << 1) | bit;
+        }
+
+        return true;
+    }
+
+    bool BitReader::read_ue(uint32_t& value)
+    {
+        value = 0;
+
+        if (!valid_)
+            return false;
+
+        uint32_t leading_zeros = 0;
+        uint32_t bit = 0;
+
+        while (true)
+        {
+            if (!read_bit(bit))
+                return false;
+
+            if (bit == 1)
+                break;
+
+            ++leading_zeros;
+
+            if (leading_zeros > 31)
+                return fail("Code Exp-Golomb non signe trop long.");
+        }
+
+        uint32_t suffix = 0;
+
+        if (leading_zeros > 0 &&
+            !read_bits(leading_zeros, suffix))
+        {
+            return false;
+        }
+
+        const uint64_t result =
+            ((uint64_t(1) << leading_zeros) - 1) + suffix;
+
+        if (result > std::numeric_limits<uint32_t>::max())
+            return fail("Valeur Exp-Golomb hors limites.");
+
+        value = static_cast<uint32_t>(result);
+        return true;
+    }
+
+    bool BitReader::read_se(int32_t& value)
+    {
+        value = 0;
+
+        uint32_t code_num = 0;
+
+        if (!read_ue(code_num))
+            return false;
+
+        const int64_t decoded =
+            (code_num & 1)
+                ? int64_t(code_num + uint64_t(1)) / 2
+                : -int64_t(code_num) / 2;
+
+        if (decoded < std::numeric_limits<int32_t>::min() ||
+            decoded > std::numeric_limits<int32_t>::max())
+        {
+            return fail("Valeur Exp-Golomb signee hors limites.");
+        }
+
+        value = static_cast<int32_t>(decoded);
+        return true;
+    }
+
+    size_t BitReader::bits_remaining() const
+    {
+        return bit_position_ <= total_bits_
+            ? total_bits_ - bit_position_
+            : 0;
+    }
+
+    bool BitReader::good() const
+    {
+        return valid_;
+    }
+
+    const std::string& BitReader::error() const
+    {
+        return error_;
+    }
+}
+
+
+
+
+===== src\jrte_sps_parser.cpp =====
+#include "jrte_sps_parser.h"
+#include "jrte_bit_reader.h"
+
+#include <cstdint>
+#include <limits>
+#include <vector>
+
+namespace jrte::h264
+{
+    static bool read_flag(BitReader& bits, bool& value)
+    {
+        uint32_t bit = 0;
+        if (!bits.read_bit(bit))
+            return false;
+
+        value = bit != 0;
+        return true;
+    }
+
+    static bool skip_scaling_list(BitReader& bits, uint32_t size)
+    {
+        int32_t last_scale = 8;
+        int32_t next_scale = 8;
+
+        for (uint32_t i = 0; i < size; ++i)
+        {
+            if (next_scale != 0)
+            {
+                int32_t delta_scale = 0;
+                if (!bits.read_se(delta_scale))
+                    return false;
+
+                next_scale = (last_scale + delta_scale + 256) % 256;
+            }
+
+            if (next_scale != 0)
+                last_scale = next_scale;
+        }
+
+        return true;
+    }
+
+    static bool is_high_profile(uint32_t profile)
+    {
+        switch (profile)
+        {
+            case 44: case 83: case 86: case 100:
+            case 110: case 118: case 122: case 128:
+            case 134: case 135: case 138: case 139:
+            case 144: case 244:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    SpsInfo parse_sps(const uint8_t* nal, uint32_t nal_size)
+    {
+        SpsInfo result;
+
+        auto fail = [&](const std::string& message) -> SpsInfo
+        {
+            result.valid = false;
+            result.error = message;
+            return result;
+        };
+
+        if (nal == nullptr || nal_size < 4)
+            return fail("Unite SPS absente ou trop courte.");
+
+        if ((nal[0] & 0x80) != 0 || (nal[0] & 0x1F) != 7)
+            return fail("L'en-tete NAL n'est pas un SPS valide.");
+
+        std::vector<uint8_t> rbsp;
+        std::string conversion_error;
+
+        if (!ebsp_to_rbsp(nal + 1, nal_size - 1, rbsp, conversion_error))
+            return fail("Conversion EBSP vers RBSP impossible : " + conversion_error);
+
+        if (rbsp.size() < 3)
+            return fail("RBSP SPS trop court.");
+
+        BitReader bits(rbsp.data(), rbsp.size());
+
+        uint32_t profile = 0;
+        uint32_t constraints = 0;
+        uint32_t level = 0;
+        uint32_t sps_id = 0;
+
+        if (!bits.read_bits(8, profile) ||
+            !bits.read_bits(8, constraints) ||
+            !bits.read_bits(8, level) ||
+            !bits.read_ue(sps_id))
+            return fail("En-tete SPS incomplet.");
+
+        if ((constraints & 0x03) != 0)
+            return fail("Bits reserves SPS non nuls.");
+
+        if (sps_id > 31)
+            return fail("Identifiant SPS hors limites.");
+
+        result.profile_idc = profile;
+        result.level_idc = level;
+        result.sps_id = sps_id;
+
+        uint32_t chroma_format = 1;
+        uint32_t bit_depth_luma_minus8 = 0;
+        uint32_t bit_depth_chroma_minus8 = 0;
+        bool separate_colour_plane = false;
+
+        if (is_high_profile(profile))
+        {
+            if (!bits.read_ue(chroma_format) || chroma_format > 3)
+                return fail("Format chromatique SPS invalide.");
+
+            if (chroma_format == 3 &&
+                !read_flag(bits, separate_colour_plane))
+                return fail("Champ separate_colour_plane_flag absent.");
+
+            if (!bits.read_ue(bit_depth_luma_minus8) ||
+                !bits.read_ue(bit_depth_chroma_minus8))
+                return fail("Profondeur de couleur SPS incomplete.");
+
+            if (bit_depth_luma_minus8 > 6 || bit_depth_chroma_minus8 > 6)
+                return fail("Profondeur de couleur non supportee.");
+
+            bool qpprime_y_zero_transform_bypass = false;
+            bool scaling_matrix_present = false;
+
+            if (!read_flag(bits, qpprime_y_zero_transform_bypass) ||
+                !read_flag(bits, scaling_matrix_present))
+                return fail("Parametres de matrice SPS incomplets.");
+
+            if (scaling_matrix_present)
+            {
+                const uint32_t list_count =
+                    chroma_format == 3 ? 12 : 8;
+
+                for (uint32_t i = 0; i < list_count; ++i)
+                {
+                    bool list_present = false;
+                    if (!read_flag(bits, list_present))
+                        return fail("Indicateur de matrice SPS absent.");
+
+                    if (list_present)
+                    {
+                        const uint32_t list_size = i < 6 ? 16 : 64;
+                        if (!skip_scaling_list(bits, list_size))
+                            return fail("Matrice de quantification SPS invalide.");
+                    }
+                }
+            }
+        }
+
+        result.separate_colour_plane = separate_colour_plane;
+        result.chroma_format_idc = chroma_format;
+        result.bit_depth_luma = 8 + bit_depth_luma_minus8;
+        result.bit_depth_chroma = 8 + bit_depth_chroma_minus8;
+
+        uint32_t log2_max_frame_num_minus4 = 0;
+        uint32_t pic_order_cnt_type = 0;
+        uint32_t log2_max_pic_order_cnt_lsb_minus4 = 0;
+
+        bool delta_pic_order_always_zero = false;
+        int32_t offset_for_non_ref_pic = 0;
+        int32_t offset_for_top_to_bottom_field = 0;
+        std::vector<int32_t> offset_for_ref_frame;
+
+        if (!bits.read_ue(log2_max_frame_num_minus4) ||
+            log2_max_frame_num_minus4 > 12)
+            return fail("Parametre log2_max_frame_num_minus4 invalide.");
+
+        if (!bits.read_ue(pic_order_cnt_type) || pic_order_cnt_type > 2)
+            return fail("Type pic_order_cnt_type invalide.");
+
+        if (pic_order_cnt_type == 0)
+        {
+            if (!bits.read_ue(log2_max_pic_order_cnt_lsb_minus4) ||
+                log2_max_pic_order_cnt_lsb_minus4 > 12)
+                return fail("Parametre POC invalide.");
+        }
+        else if (pic_order_cnt_type == 1)
+        {
+            uint32_t cycle_count = 0;
+
+            if (!read_flag(bits, delta_pic_order_always_zero) ||
+                !bits.read_se(offset_for_non_ref_pic) ||
+                !bits.read_se(offset_for_top_to_bottom_field) ||
+                !bits.read_ue(cycle_count) ||
+                cycle_count > 255)
+                return fail("Parametres POC de type 1 invalides.");
+
+            offset_for_ref_frame.reserve(cycle_count);
+
+            for (uint32_t i = 0; i < cycle_count; ++i)
+            {
+                int32_t offset = 0;
+
+                if (!bits.read_se(offset))
+                    return fail("Cycle POC incomplet.");
+
+                offset_for_ref_frame.push_back(offset);
+            }
+        }
+
+        result.log2_max_frame_num =
+            log2_max_frame_num_minus4 + 4;
+
+        result.pic_order_cnt_type = pic_order_cnt_type;
+
+        if (pic_order_cnt_type == 0)
+            result.log2_max_pic_order_cnt_lsb =
+                log2_max_pic_order_cnt_lsb_minus4 + 4;
+
+        result.delta_pic_order_always_zero =
+            delta_pic_order_always_zero;
+
+        result.offset_for_non_ref_pic = offset_for_non_ref_pic;
+        result.offset_for_top_to_bottom_field =
+            offset_for_top_to_bottom_field;
+
+        result.offset_for_ref_frame = offset_for_ref_frame;
+        uint32_t max_num_ref_frames = 0;
+        bool gaps_in_frame_num = false;
+
+        if (!bits.read_ue(max_num_ref_frames) ||
+            !read_flag(bits, gaps_in_frame_num))
+            return fail("Parametres de reference SPS incomplets.");
+
+        if (max_num_ref_frames > 16)
+            return fail("Nombre maximal de references SPS hors limites.");
+
+        result.max_num_ref_frames = max_num_ref_frames;
+        result.gaps_in_frame_num_allowed = gaps_in_frame_num;
+
+        uint32_t width_mbs_minus1 = 0;
+        uint32_t height_map_units_minus1 = 0;
+
+        if (!bits.read_ue(width_mbs_minus1) ||
+            !bits.read_ue(height_map_units_minus1))
+            return fail("Dimensions SPS absentes.");
+
+        if (width_mbs_minus1 > 65535 || height_map_units_minus1 > 65535)
+            return fail("Dimensions SPS hors limites.");
+
+        bool frame_mbs_only = false;
+
+        if (!read_flag(bits, frame_mbs_only))
+            return fail("Champ frame_mbs_only_flag absent.");
+
+        result.frame_mbs_only = frame_mbs_only;
+
+        if (!frame_mbs_only)
+        {
+            if (!read_flag(bits, result.mb_adaptive_frame_field))
+                return fail("Champ mb_adaptive_frame_field_flag absent.");
+        }
+
+        if (!read_flag(bits, result.direct_8x8_inference))
+            return fail("Champ direct_8x8_inference_flag absent.");
+
+        bool cropping = false;
+        uint32_t crop_left = 0;
+        uint32_t crop_right = 0;
+        uint32_t crop_top = 0;
+        uint32_t crop_bottom = 0;
+
+        if (!read_flag(bits, cropping))
+            return fail("Champ frame_cropping_flag absent.");
+
+        if (cropping)
+        {
+            if (!bits.read_ue(crop_left) ||
+                !bits.read_ue(crop_right) ||
+                !bits.read_ue(crop_top) ||
+                !bits.read_ue(crop_bottom))
+                return fail("Parametres de recadrage SPS incomplets.");
+        }
+
+        const uint32_t chroma_array_type =
+            separate_colour_plane ? 0 : chroma_format;
+
+        uint32_t sub_width_c = 1;
+        uint32_t sub_height_c = 1;
+
+        if (chroma_array_type == 1)
+        {
+            sub_width_c = 2;
+            sub_height_c = 2;
+        }
+        else if (chroma_array_type == 2)
+        {
+            sub_width_c = 2;
+            sub_height_c = 1;
+        }
+
+        const uint64_t coded_width =
+            (uint64_t(width_mbs_minus1) + 1) * 16;
+
+        const uint64_t coded_height =
+            (uint64_t(height_map_units_minus1) + 1) *
+            (frame_mbs_only ? 1 : 2) * 16;
+
+        const uint64_t crop_unit_x =
+            chroma_array_type == 0 ? 1 : sub_width_c;
+
+        const uint64_t crop_unit_y =
+            chroma_array_type == 0
+                ? (frame_mbs_only ? 1 : 2)
+                : sub_height_c * (frame_mbs_only ? 1 : 2);
+
+        const uint64_t crop_x =
+            uint64_t(crop_left + uint64_t(crop_right)) * crop_unit_x;
+
+        const uint64_t crop_y =
+            uint64_t(crop_top + uint64_t(crop_bottom)) * crop_unit_y;
+
+        if (crop_x >= coded_width || crop_y >= coded_height)
+            return fail("Recadrage SPS superieur aux dimensions.");
+
+        const uint64_t final_width = coded_width - crop_x;
+        const uint64_t final_height = coded_height - crop_y;
+
+        if (final_width == 0 || final_height == 0 ||
+            final_width > std::numeric_limits<uint32_t>::max() ||
+            final_height > std::numeric_limits<uint32_t>::max())
+            return fail("Dimensions finales SPS invalides.");
+
+        result.width_in_mbs = width_mbs_minus1 + 1;
+        result.height_in_map_units = height_map_units_minus1 + 1;
+        result.width = static_cast<uint32_t>(final_width);
+        result.height = static_cast<uint32_t>(final_height);
+        result.frame_mbs_only = frame_mbs_only;
+        result.frame_cropping = cropping;
+        result.crop_left = crop_left;
+        result.crop_right = crop_right;
+        result.crop_top = crop_top;
+        result.crop_bottom = crop_bottom;
+        result.valid = true;
+
+        return result;
+    }
+}
+
+
+
+
+===== src\jrte_pps_parser.cpp =====
+#include "jrte_pps_parser.h"
+#include "jrte_bit_reader.h"
+
+#include <vector>
+#include <cstdint>
+
+namespace jrte::h264
+{
+    static bool read_flag(BitReader& bits, bool& value)
+    {
+        uint32_t bit = 0;
+        if (!bits.read_bit(bit))
+            return false;
+
+        value = bit != 0;
+        return true;
+    }
+
+    static uint32_t ceil_log2(uint32_t value)
+    {
+        uint32_t result = 0;
+        uint32_t current = 1;
+
+        while (current < value)
+        {
+            current <<= 1;
+            ++result;
+        }
+
+        return result;
+    }
+
+    PpsInfo parse_pps(const uint8_t* nal, uint32_t nal_size)
+    {
+        PpsInfo result;
+
+        auto fail = [&](const std::string& message) -> PpsInfo
+        {
+            result.valid = false;
+            result.error = message;
+            return result;
+        };
+
+        if (nal == nullptr || nal_size < 2)
+            return fail("Unite PPS absente ou trop courte.");
+
+        if ((nal[0] & 0x80) != 0 || (nal[0] & 0x1F) != 8)
+            return fail("L'en-tete NAL n'est pas un PPS valide.");
+
+        std::vector<uint8_t> rbsp;
+        std::string conversion_error;
+
+        if (!ebsp_to_rbsp(
+            nal + 1,
+            nal_size - 1,
+            rbsp,
+            conversion_error))
+        {
+            return fail("Conversion EBSP vers RBSP impossible : " +
+                        conversion_error);
+        }
+
+        if (rbsp.empty())
+            return fail("RBSP PPS vide.");
+
+        BitReader bits(rbsp.data(), rbsp.size());
+
+        uint32_t pps_id = 0;
+        uint32_t sps_id = 0;
+
+        if (!bits.read_ue(pps_id) || !bits.read_ue(sps_id))
+            return fail("Identifiants PPS/SPS incomplets.");
+
+        if (pps_id > 255 || sps_id > 31)
+            return fail("Identifiant PPS ou SPS hors limites.");
+
+        result.pps_id = pps_id;
+        result.sps_id = sps_id;
+
+        if (!read_flag(bits, result.entropy_coding_mode) ||
+            !read_flag(bits, result.bottom_field_pic_order_in_frame_present))
+        {
+            return fail("Drapeaux initiaux PPS incomplets.");
+        }
+
+        uint32_t slice_groups_minus1 = 0;
+
+        if (!bits.read_ue(slice_groups_minus1) ||
+            slice_groups_minus1 > 7)
+        {
+            return fail("Nombre de groupes de tranches invalide.");
+        }
+
+        result.num_slice_groups = slice_groups_minus1 + 1;
+
+        if (slice_groups_minus1 > 0)
+        {
+            uint32_t map_type = 0;
+
+            if (!bits.read_ue(map_type) || map_type > 6)
+                return fail("Type de carte FMO invalide.");
+
+            result.slice_group_map_type = map_type;
+
+            if (map_type == 0)
+            {
+                for (uint32_t i = 0; i <= slice_groups_minus1; ++i)
+                {
+                    uint32_t run_length_minus1 = 0;
+                    if (!bits.read_ue(run_length_minus1))
+                        return fail("Carte FMO de type 0 incomplete.");
+                }
+            }
+            else if (map_type == 2)
+            {
+                for (uint32_t i = 0; i < slice_groups_minus1; ++i)
+                {
+                    uint32_t top_left = 0;
+                    uint32_t bottom_right = 0;
+
+                    if (!bits.read_ue(top_left) ||
+                        !bits.read_ue(bottom_right) ||
+                        bottom_right < top_left)
+                    {
+                        return fail("Carte FMO de type 2 invalide.");
+                    }
+                }
+            }
+            else if (map_type >= 3 && map_type <= 5)
+            {
+                bool direction = false;
+                uint32_t change_rate_minus1 = 0;
+
+                if (!read_flag(bits, direction) ||
+                    !bits.read_ue(change_rate_minus1))
+                {
+                    return fail("Carte FMO de type 3, 4 ou 5 incomplete.");
+                }
+
+                if (change_rate_minus1 >= 1000000)
+                    return fail("Taux de changement FMO hors limites.");
+
+                result.slice_group_change_direction = direction;
+                result.slice_group_change_rate = change_rate_minus1 + 1;
+            }
+            else if (map_type == 6)
+            {
+                uint32_t pic_size_minus1 = 0;
+
+                if (!bits.read_ue(pic_size_minus1) ||
+                    pic_size_minus1 > 1000000)
+                {
+                    return fail("Taille de carte FMO hors limites.");
+                }
+
+                const uint32_t map_bits =
+                    ceil_log2(result.num_slice_groups);
+
+                for (uint32_t i = 0; i <= pic_size_minus1; ++i)
+                {
+                    uint32_t group_id = 0;
+
+                    if (map_bits > 0 &&
+                        !bits.read_bits(map_bits, group_id))
+                    {
+                        return fail("Carte FMO de type 6 incomplete.");
+                    }
+
+                    if (group_id >= result.num_slice_groups)
+                        return fail("Identifiant de groupe FMO invalide.");
+                }
+            }
+            else if (map_type == 1)
+            {
+                // Carte dispersee : aucun champ supplementaire.
+            }
+        }
+
+        uint32_t l0_minus1 = 0;
+        uint32_t l1_minus1 = 0;
+
+        if (!bits.read_ue(l0_minus1) ||
+            !bits.read_ue(l1_minus1) ||
+            l0_minus1 > 31 ||
+            l1_minus1 > 31)
+        {
+            return fail("Parametres de references PPS invalides.");
+        }
+
+        result.num_ref_idx_l0_default_active = l0_minus1 + 1;
+        result.num_ref_idx_l1_default_active = l1_minus1 + 1;
+
+        if (!read_flag(bits, result.weighted_pred))
+            return fail("weighted_pred_flag absent.");
+
+        if (!bits.read_bits(2, result.weighted_bipred_idc) ||
+            result.weighted_bipred_idc > 2)
+        {
+            return fail("weighted_bipred_idc invalide.");
+        }
+
+        if (!bits.read_se(result.pic_init_qp_minus26) ||
+            !bits.read_se(result.pic_init_qs_minus26) ||
+            !bits.read_se(result.chroma_qp_index_offset))
+        {
+            return fail("Parametres de quantification PPS incomplets.");
+        }
+
+        if (result.pic_init_qp_minus26 < -26 ||
+            result.pic_init_qp_minus26 > 25 ||
+            result.pic_init_qs_minus26 < -26 ||
+            result.pic_init_qs_minus26 > 25 ||
+            result.chroma_qp_index_offset < -12 ||
+            result.chroma_qp_index_offset > 12)
+        {
+            return fail("Valeur de quantification PPS hors limites.");
+        }
+
+        if (!read_flag(bits, result.deblocking_filter_control_present) ||
+            !read_flag(bits, result.constrained_intra_pred) ||
+            !read_flag(bits, result.redundant_pic_cnt_present))
+        {
+            return fail("Drapeaux finaux PPS incomplets.");
+        }
+
+        result.valid = true;
+        return result;
+    }
+}
+
+
+===== src\jrte_slice_parser.cpp =====
+#include "jrte_slice_parser.h"
+#include "jrte_bit_reader.h"
+
+#include <vector>
+#include <string>
+#include <cstdint>
+#include <cmath>
+#include <limits>
+
+namespace jrte::h264
+{
+    namespace
+    {
+        bool read_flag(BitReader& bits, bool& value)
+        {
+            uint32_t bit = 0;
+            if (!bits.read_bit(bit))
+                return false;
+
+            value = bit != 0;
+            return true;
+        }
+
+        bool read_ref_pic_list_modification(
+            BitReader& bits,
+            bool& modification_flag)
+        {
+            if (!read_flag(bits, modification_flag))
+                return false;
+
+            if (!modification_flag)
+                return true;
+
+            for (uint32_t i = 0; i < 64; ++i)
+            {
+                uint32_t idc = 0;
+
+                if (!bits.read_ue(idc))
+                    return false;
+
+                if (idc == 3)
+                    return true;
+
+                if (idc > 2)
+                    return false;
+
+                uint32_t value = 0;
+
+                if (!bits.read_ue(value))
+                    return false;
+            }
+
+            return false;
+        }
+
+        bool read_pred_weight_table(
+            BitReader& bits,
+            const SpsInfo& sps,
+            const PpsInfo& pps,
+            uint32_t slice_type,
+            uint32_t l0_count,
+            uint32_t l1_count)
+        {
+            uint32_t luma_denom = 0;
+
+            if (!bits.read_ue(luma_denom) || luma_denom > 7)
+                return false;
+
+            const uint32_t chroma_array_type =
+                sps.separate_colour_plane ? 0 : sps.chroma_format_idc;
+
+            if (chroma_array_type != 0)
+            {
+                uint32_t chroma_denom = 0;
+
+                if (!bits.read_ue(chroma_denom) || chroma_denom > 7)
+                    return false;
+            }
+
+            auto read_list = [&](uint32_t count) -> bool
+            {
+                if (count > 32)
+                    return false;
+
+                for (uint32_t i = 0; i < count; ++i)
+                {
+                    bool flag = false;
+
+                    if (!read_flag(bits, flag))
+                        return false;
+
+                    if (flag)
+                    {
+                        int32_t weight = 0;
+                        int32_t offset = 0;
+
+                        if (!bits.read_se(weight) ||
+                            !bits.read_se(offset))
+                            return false;
+                    }
+
+                    if (chroma_array_type != 0)
+                    {
+                        if (!read_flag(bits, flag))
+                            return false;
+
+                        if (flag)
+                        {
+                            for (uint32_t j = 0; j < 2; ++j)
+                            {
+                                int32_t weight = 0;
+                                int32_t offset = 0;
+
+                                if (!bits.read_se(weight) ||
+                                    !bits.read_se(offset))
+                                    return false;
+                            }
+                        }
+                    }
+                }
+
+                return true;
+            };
+
+            if (!read_list(l0_count))
+                return false;
+
+            if (slice_type == 1)
+            {
+                if (!read_list(l1_count))
+                    return false;
+            }
+
+            (void)pps;
+            return true;
+        }
+
+        bool read_dec_ref_pic_marking(
+            BitReader& bits,
+            SliceInfo& result)
+        {
+            if (result.nal_type == 5)
+            {
+                if (!read_flag(bits, result.no_output_of_prior_pics_flag) ||
+                    !read_flag(bits, result.long_term_reference_flag))
+                    return false;
+
+                return true;
+            }
+
+            if (!read_flag(
+                    bits,
+                    result.adaptive_ref_pic_marking_mode_flag))
+                return false;
+
+            if (!result.adaptive_ref_pic_marking_mode_flag)
+                return true;
+
+            for (uint32_t i = 0; i < 64; ++i)
+            {
+                uint32_t operation = 0;
+
+                if (!bits.read_ue(operation))
+                    return false;
+
+                if (operation == 0)
+                    return true;
+
+                if (operation > 6)
+                    return false;
+
+                uint32_t value = 0;
+
+                if (operation == 1 || operation == 3)
+                {
+                    if (!bits.read_ue(value))
+                        return false;
+                }
+
+                if (operation == 2)
+                {
+                    if (!bits.read_ue(value))
+                        return false;
+                }
+
+                if (operation == 3 || operation == 6)
+                {
+                    if (!bits.read_ue(value))
+                        return false;
+                }
+
+                if (operation == 4)
+                {
+                    if (!bits.read_ue(value))
+                        return false;
+                }
+            }
+
+            return false;
+        }
+
+        bool prepare_slice(
+            const uint8_t* nal,
+            uint32_t nal_size,
+            SliceInfo& result,
+            std::vector<uint8_t>& rbsp)
+        {
+            if (nal == nullptr || nal_size < 2)
+            {
+                result.error = "Unite NAL Slice invalide ou trop courte.";
+                return false;
+            }
+
+            if ((nal[0] & 0x80) != 0)
+            {
+                result.error = "forbidden_zero_bit non nul.";
+                return false;
+            }
+
+            result.nal_ref_idc = (nal[0] >> 5) & 0x03;
+            result.nal_type = nal[0] & 0x1F;
+
+            if (result.nal_type != 1 && result.nal_type != 5)
+            {
+                result.error = "Type NAL non pris en charge pour un Slice.";
+                return false;
+            }
+
+            std::string conversion_error;
+
+            if (!ebsp_to_rbsp(
+                    nal + 1,
+                    nal_size - 1,
+                    rbsp,
+                    conversion_error))
+            {
+                result.error = conversion_error;
+                return false;
+            }
+
+            if (rbsp.empty())
+            {
+                result.error = "Donnees RBSP Slice absentes.";
+                return false;
+            }
+
+            return true;
+        }
+
+        bool read_slice_identity(
+            BitReader& bits,
+            SliceInfo& result)
+        {
+            if (!bits.read_ue(result.first_mb_in_slice) ||
+                !bits.read_ue(result.slice_type) ||
+                !bits.read_ue(result.pic_parameter_set_id))
+            {
+                result.error = "En-tete Slice incomplet.";
+                return false;
+            }
+
+            if (result.slice_type > 9)
+            {
+                result.error = "slice_type hors limites.";
+                return false;
+            }
+
+            if (result.pic_parameter_set_id > 255)
+            {
+                result.error = "pic_parameter_set_id hors limites.";
+                return false;
+            }
+
+            static const char* names[] = {
+                "P", "B", "I", "SP", "SI"
+            };
+
+            result.slice_type_name =
+                names[result.slice_type % 5];
+
+            return true;
+        }
+
+        bool read_slice_group_change_cycle(
+            BitReader& bits,
+            const SpsInfo& sps,
+            const PpsInfo& pps,
+            SliceInfo& result)
+        {
+            if (pps.num_slice_groups <= 1 ||
+                pps.slice_group_map_type < 3 ||
+                pps.slice_group_map_type > 5)
+                return true;
+
+            if (pps.slice_group_change_rate == 0)
+                return false;
+
+            const uint64_t picture_size =
+                static_cast<uint64_t>(sps.width_in_mbs) *
+                sps.height_in_map_units;
+
+            if (picture_size == 0)
+                return false;
+
+            const uint64_t maximum =
+                (picture_size + pps.slice_group_change_rate - 1) /
+                pps.slice_group_change_rate;
+
+            uint32_t bit_count = 0;
+            uint64_t value = maximum;
+
+            while (value != 0)
+            {
+                ++bit_count;
+                value >>= 1;
+            }
+
+            if (bit_count > 32)
+                return false;
+
+            if (bit_count != 0 &&
+                !bits.read_bits(bit_count, result.slice_group_change_cycle))
+                return false;
+
+            return true;
+        }
+    }
+
+    SliceInfo parse_slice_header(
+        const uint8_t* nal,
+        uint32_t nal_size)
+    {
+        SliceInfo result;
+        std::vector<uint8_t> rbsp;
+
+        if (!prepare_slice(nal, nal_size, result, rbsp))
+            return result;
+
+        BitReader bits(rbsp.data(), rbsp.size());
+
+        if (!read_slice_identity(bits, result))
+            return result;
+
+        result.valid = true;
+        return result;
+    }
+
+    SliceInfo parse_slice_header(
+        const uint8_t* nal,
+        uint32_t nal_size,
+        const SpsInfo& sps,
+        const PpsInfo& pps)
+    {
+        SliceInfo result;
+        std::vector<uint8_t> rbsp;
+
+        if (!prepare_slice(nal, nal_size, result, rbsp))
+            return result;
+
+        if (!sps.valid || !pps.valid)
+        {
+            result.error = "SPS ou PPS invalide.";
+            return result;
+        }
+
+        BitReader bits(rbsp.data(), rbsp.size());
+
+        if (!read_slice_identity(bits, result))
+            return result;
+
+        if (result.pic_parameter_set_id != pps.pps_id ||
+            pps.sps_id != sps.sps_id)
+        {
+            result.error = "Association SPS/PPS invalide.";
+            return result;
+        }
+
+        if (sps.log2_max_frame_num < 4 ||
+            sps.log2_max_frame_num > 16 ||
+            sps.pic_order_cnt_type > 2)
+        {
+            result.error = "Parametres SPS invalides.";
+            return result;
+        }
+
+        if (sps.pic_order_cnt_type == 0 &&
+            (sps.log2_max_pic_order_cnt_lsb < 4 ||
+             sps.log2_max_pic_order_cnt_lsb > 16))
+        {
+            result.error = "log2_max_pic_order_cnt_lsb hors limites.";
+            return result;
+        }
+
+        if (sps.separate_colour_plane)
+        {
+            if (!bits.read_bits(2, result.colour_plane_id) ||
+                result.colour_plane_id > 2)
+            {
+                result.error = "colour_plane_id invalide.";
+                return result;
+            }
+        }
+
+        if (!bits.read_bits(
+                sps.log2_max_frame_num,
+                result.frame_num))
+        {
+            result.error = "frame_num absent.";
+            return result;
+        }
+
+        if (!sps.frame_mbs_only)
+        {
+            if (!read_flag(bits, result.field_pic_flag))
+            {
+                result.error = "field_pic_flag absent.";
+                return result;
+            }
+
+            if (result.field_pic_flag &&
+                !read_flag(bits, result.bottom_field_flag))
+            {
+                result.error = "bottom_field_flag absent.";
+                return result;
+            }
+        }
+
+        if (result.nal_type == 5)
+        {
+            if (!bits.read_ue(result.idr_pic_id) ||
+                result.idr_pic_id > 65535)
+            {
+                result.error = "idr_pic_id invalide.";
+                return result;
+            }
+        }
+
+        if (sps.pic_order_cnt_type == 0)
+        {
+            if (!bits.read_bits(
+                    sps.log2_max_pic_order_cnt_lsb,
+                    result.pic_order_cnt_lsb))
+            {
+                result.error = "pic_order_cnt_lsb absent.";
+                return result;
+            }
+
+            if (pps.bottom_field_pic_order_in_frame_present &&
+                !result.field_pic_flag &&
+                !bits.read_se(result.delta_pic_order_cnt_bottom))
+            {
+                result.error = "delta_pic_order_cnt_bottom absent.";
+                return result;
+            }
+        }
+        else if (sps.pic_order_cnt_type == 1 &&
+                 !sps.delta_pic_order_always_zero)
+        {
+            if (!bits.read_se(result.delta_pic_order_cnt0))
+            {
+                result.error = "delta_pic_order_cnt[0] absent.";
+                return result;
+            }
+
+            if (pps.bottom_field_pic_order_in_frame_present &&
+                !result.field_pic_flag &&
+                !bits.read_se(result.delta_pic_order_cnt1))
+            {
+                result.error = "delta_pic_order_cnt[1] absent.";
+                return result;
+            }
+        }
+
+        if (pps.redundant_pic_cnt_present)
+        {
+            if (!bits.read_ue(result.redundant_pic_cnt) ||
+                result.redundant_pic_cnt > 127)
+            {
+                result.error = "redundant_pic_cnt invalide.";
+                return result;
+            }
+        }
+
+        const uint32_t normalized_type = result.slice_type % 5;
+        const bool is_p = normalized_type == 0;
+        const bool is_b = normalized_type == 1;
+        const bool is_i = normalized_type == 2;
+        const bool is_sp = normalized_type == 3;
+        const bool is_si = normalized_type == 4;
+
+        if (is_b &&
+            !read_flag(bits, result.direct_spatial_mv_pred_flag))
+        {
+            result.error = "direct_spatial_mv_pred_flag absent.";
+            return result;
+        }
+
+        result.effective_num_ref_idx_l0 =
+            pps.num_ref_idx_l0_default_active;
+
+        result.effective_num_ref_idx_l1 =
+            pps.num_ref_idx_l1_default_active;
+
+        if (is_p || is_sp || is_b)
+        {
+            if (!read_flag(
+                    bits,
+                    result.num_ref_idx_active_override_flag))
+            {
+                result.error = "num_ref_idx_active_override_flag absent.";
+                return result;
+            }
+
+            if (result.num_ref_idx_active_override_flag)
+            {
+                if (!bits.read_ue(result.num_ref_idx_l0_active_minus1) ||
+                    result.num_ref_idx_l0_active_minus1 > 31)
+                {
+                    result.error = "Nombre de references L0 invalide.";
+                    return result;
+                }
+
+                result.effective_num_ref_idx_l0 =
+                    result.num_ref_idx_l0_active_minus1 + 1;
+
+                if (is_b)
+                {
+                    if (!bits.read_ue(
+                            result.num_ref_idx_l1_active_minus1) ||
+                        result.num_ref_idx_l1_active_minus1 > 31)
+                    {
+                        result.error = "Nombre de references L1 invalide.";
+                        return result;
+                    }
+
+                    result.effective_num_ref_idx_l1 =
+                        result.num_ref_idx_l1_active_minus1 + 1;
+                }
+            }
+        }
+
+        if (!is_i && !is_si)
+        {
+            if (!read_ref_pic_list_modification(
+                    bits,
+                    result.ref_pic_list_modification_flag_l0))
+            {
+                result.error = "Modification de liste L0 invalide.";
+                return result;
+            }
+
+            if (is_b &&
+                !read_ref_pic_list_modification(
+                    bits,
+                    result.ref_pic_list_modification_flag_l1))
+            {
+                result.error = "Modification de liste L1 invalide.";
+                return result;
+            }
+        }
+
+        const bool weighted =
+            (pps.weighted_pred && (is_p || is_sp)) ||
+            (pps.weighted_bipred_idc == 1 && is_b);
+
+        if (weighted)
+        {
+            if (!read_pred_weight_table(
+                    bits,
+                    sps,
+                    pps,
+                    normalized_type,
+                    result.effective_num_ref_idx_l0,
+                    result.effective_num_ref_idx_l1))
+            {
+                result.error = "Table de prediction ponderee invalide.";
+                return result;
+            }
+        }
+
+        if (result.nal_ref_idc != 0)
+        {
+            if (!read_dec_ref_pic_marking(bits, result))
+            {
+                result.error = "Marquage des images de reference invalide.";
+                return result;
+            }
+        }
+
+        if (pps.entropy_coding_mode && !is_i && !is_si)
+        {
+            if (!bits.read_ue(result.cabac_init_idc) ||
+                result.cabac_init_idc > 2)
+            {
+                result.error = "cabac_init_idc invalide.";
+                return result;
+            }
+        }
+
+        if (!bits.read_se(result.slice_qp_delta))
+        {
+            result.error = "slice_qp_delta absent.";
+            return result;
+        }
+
+        if (is_sp || is_si)
+        {
+            if (is_sp &&
+                !read_flag(bits, result.sp_for_switch_flag))
+            {
+                result.error = "sp_for_switch_flag absent.";
+                return result;
+            }
+
+            if (!bits.read_se(result.slice_qs_delta))
+            {
+                result.error = "slice_qs_delta absent.";
+                return result;
+            }
+        }
+
+        if (pps.deblocking_filter_control_present)
+        {
+            if (!bits.read_ue(result.disable_deblocking_filter_idc) ||
+                result.disable_deblocking_filter_idc > 2)
+            {
+                result.error = "disable_deblocking_filter_idc invalide.";
+                return result;
+            }
+
+            if (result.disable_deblocking_filter_idc != 1)
+            {
+                if (!bits.read_se(result.slice_alpha_c0_offset_div2) ||
+                    !bits.read_se(result.slice_beta_offset_div2))
+                {
+                    result.error = "Offsets de deblocage absents.";
+                    return result;
+                }
+            }
+        }
+
+        if (!read_slice_group_change_cycle(
+                bits, sps, pps, result))
+        {
+            result.error = "slice_group_change_cycle invalide.";
+            return result;
+        }
+
+        if (pps.entropy_coding_mode)
+        {
+            size_t current =
+                rbsp.size() * 8 - bits.bits_remaining();
+
+            // En CABAC, chaque bit d'alignement doit valoir 1.
+            while (current % 8 != 0)
+            {
+                uint32_t alignment_bit = 0;
+
+                if (!bits.read_bit(alignment_bit) ||
+                    alignment_bit != 1)
+                {
+                    result.error = "cabac_alignment_one_bit invalide.";
+                    return result;
+                }
+
+                current =
+                    rbsp.size() * 8 - bits.bits_remaining();
+            }
+
+            result.cabac_alignment_valid = true;
+            result.cabac_data_bit_offset = current;
+            result.cabac_data_byte_offset = current / 8;
+        }
+
+        result.core_header_complete = true;
+        result.valid = true;
+
+        return result;
+    }
+}
+
+
+===== src\jrte_cavlc_decoder.cpp =====
+#include "jrte_cavlc_decoder.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <utility>
+
+namespace jrte::h264
+{
+    namespace
+    {
+        constexpr uint8_t kCoeffTokenLengths[3][68] =
+        {
+            {
+                1,0,0,0, 6,2,0,0, 8,6,3,0, 9,8,7,5,
+                10,9,8,6, 11,10,9,7, 13,11,10,8, 13,13,11,9,
+                13,13,13,10, 14,14,13,11, 14,14,14,13,
+                15,15,14,14, 15,15,15,14, 16,15,15,15,
+                16,16,16,15, 16,16,16,16, 16,16,16,16
+            },
+            {
+                2,0,0,0, 6,2,0,0, 6,5,3,0, 7,6,6,4,
+                8,6,6,4, 8,7,7,5, 9,8,8,6, 11,9,9,6,
+                11,11,11,7, 12,11,11,9, 12,12,12,11,
+                12,12,12,11, 13,13,13,12, 13,13,13,13,
+                13,14,13,13, 14,14,14,13, 14,14,14,14
+            },
+            {
+                4,0,0,0, 6,4,0,0, 6,5,4,0, 6,5,5,4,
+                7,5,5,4, 7,5,5,4, 7,6,6,4, 7,6,6,4,
+                8,7,7,5, 8,8,7,6, 9,8,8,7, 9,9,8,8,
+                9,9,9,8, 10,9,9,9, 10,10,10,10,
+                10,10,10,10, 10,10,10,10
+            }
+        };
+
+        constexpr uint8_t kCoeffTokenCodes[3][68] =
+        {
+            {
+                1,0,0,0, 5,1,0,0, 7,4,1,0, 7,6,5,3,
+                7,6,5,3, 7,6,5,4, 15,6,5,4, 11,14,5,4,
+                8,10,13,4, 15,14,9,4, 11,10,13,12,
+                15,14,9,12, 11,10,13,8, 15,1,9,12,
+                11,14,13,8, 7,10,9,12, 4,6,5,8
+            },
+            {
+                3,0,0,0, 11,2,0,0, 7,7,3,0, 7,10,9,5,
+                7,6,5,4, 4,6,5,6, 7,6,5,8, 15,6,5,4,
+                11,14,13,4, 15,10,9,4, 11,14,13,12,
+                8,10,9,8, 15,14,13,12, 11,10,9,12,
+                7,11,6,8, 9,8,10,1, 7,6,5,4
+            },
+            {
+                15,0,0,0, 15,14,0,0, 11,15,13,0, 8,12,14,12,
+                15,10,11,11, 11,8,9,10, 9,14,13,9, 8,10,9,8,
+                15,14,13,13, 11,14,10,12, 15,10,13,12,
+                11,14,9,12, 8,10,13,8, 13,7,9,12,
+                9,12,11,10, 5,8,7,6, 1,4,3,2
+            }
+        };
+
+        constexpr uint8_t kChroma420CoeffTokenLengths[20] =
+        {
+            2,0,0,0, 6,1,0,0, 6,6,3,0, 6,7,7,6, 6,8,8,7
+        };
+
+        constexpr uint8_t kChroma420CoeffTokenCodes[20] =
+        {
+            1,0,0,0, 7,1,0,0, 4,6,1,0, 3,3,2,5, 2,3,2,0
+        };
+
+        constexpr uint8_t kChroma422CoeffTokenLengths[36] =
+        {
+            1,0,0,0, 7,2,0,0, 7,7,3,0, 9,7,7,5,
+            9,9,7,6, 10,10,9,7, 11,11,10,7,
+            12,12,11,10, 13,12,12,11
+        };
+
+        constexpr uint8_t kChroma422CoeffTokenCodes[36] =
+        {
+            1,0,0,0, 15,1,0,0, 14,13,1,0, 7,12,11,1,
+            6,5,10,1, 7,6,4,9, 7,6,5,8,
+            7,6,5,4, 7,5,4,4
+        };
+
+        bool decode_fixed_coeff_token(
+            BitReader& bits,
+            CoeffToken& result,
+            std::string& error)
+        {
+            uint32_t code = 0;
+
+            if (!bits.read_bits(6, code))
+            {
+                error = "Flux tronque pendant le coeff_token fixe.";
+                return false;
+            }
+
+            if (code == 3)
+            {
+                result.total_coeff = 0;
+                result.trailing_ones = 0;
+                return true;
+            }
+
+            const uint32_t total_coeff = (code >> 2) + 1;
+            const uint32_t trailing_ones = code & 3;
+
+            if (total_coeff > 16 || trailing_ones > 3 ||
+                trailing_ones > total_coeff)
+            {
+                error = "Code coeff_token fixe invalide.";
+                return false;
+            }
+
+            result.total_coeff = static_cast<uint8_t>(total_coeff);
+            result.trailing_ones = static_cast<uint8_t>(trailing_ones);
+            return true;
+        }
+
+        bool decode_chroma_dc_coeff_token(
+            BitReader& bits,
+            const uint8_t* lengths,
+            const uint8_t* codes,
+            uint8_t max_total_coeff,
+            uint8_t max_code_length,
+            CoeffToken& result,
+            std::string& error)
+        {
+            uint32_t code = 0;
+
+            for (uint8_t length = 1; length <= max_code_length; ++length)
+            {
+                uint32_t bit = 0;
+
+                if (!bits.read_bit(bit))
+                {
+                    error = "Flux tronque pendant le coeff_token chroma DC : "
+                        + bits.error();
+                    return false;
+                }
+
+                code = (code << 1) | bit;
+
+                for (uint8_t total = 0; total <= max_total_coeff; ++total)
+                {
+                    const uint8_t max_trailing =
+                        total < 3 ? total : 3;
+
+                    for (uint8_t trailing = 0;
+                         trailing <= max_trailing;
+                         ++trailing)
+                    {
+                        const size_t index =
+                            static_cast<size_t>(total) * 4 + trailing;
+
+                        if (lengths[index] == length &&
+                            codes[index] == code)
+                        {
+                            result.total_coeff = total;
+                            result.trailing_ones = trailing;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            error = "Code coeff_token chroma DC inconnu ou invalide.";
+            return false;
+        }
+    }
+
+    bool decode_coeff_token(
+        BitReader& bits,
+        int nC,
+        CoeffToken& result,
+        std::string& error)
+    {
+        result = {};
+        error.clear();
+
+        if (nC < -2)
+        {
+            error = "Valeur nC invalide : valeurs inferieures a -2 interdites.";
+            return false;
+        }
+
+        if (nC > 16)
+        {
+            error = "Valeur nC hors limites.";
+            return false;
+        }
+
+        if (!bits.good())
+        {
+            error = "BitReader invalide : " + bits.error();
+            return false;
+        }
+
+        if (nC == -1)
+        {
+            return decode_chroma_dc_coeff_token(
+                bits, kChroma420CoeffTokenLengths,
+                kChroma420CoeffTokenCodes, 4, 8, result, error);
+        }
+
+        if (nC == -2)
+        {
+            return decode_chroma_dc_coeff_token(
+                bits, kChroma422CoeffTokenLengths,
+                kChroma422CoeffTokenCodes, 8, 13, result, error);
+        }
+
+        if (nC >= 8)
+            return decode_fixed_coeff_token(bits, result, error);
+
+        const unsigned int table =
+            nC < 2 ? 0u : (nC < 4 ? 1u : 2u);
+
+        uint32_t code = 0;
+
+        for (uint8_t length = 1; length <= 16; ++length)
+        {
+            uint32_t bit = 0;
+
+            if (!bits.read_bit(bit))
+            {
+                error = "Flux tronque pendant le coeff_token : "
+                    + bits.error();
+                return false;
+            }
+
+            code = (code << 1) | bit;
+
+            for (uint8_t total = 0; total <= 16; ++total)
+            {
+                for (uint8_t trailing = 0; trailing <= 3; ++trailing)
+                {
+                    const size_t index =
+                        static_cast<size_t>(total) * 4 + trailing;
+
+                    if (kCoeffTokenLengths[table][index] != length)
+                        continue;
+
+                    if (kCoeffTokenCodes[table][index] != code)
+                        continue;
+
+                    if (trailing > total)
+                        continue;
+
+                    result.total_coeff = total;
+                    result.trailing_ones = trailing;
+                    return true;
+                }
+            }
+        }
+
+        error = "Code coeff_token inconnu ou invalide.";
+        return false;
+    }
+}
+
+namespace jrte::h264
+{
+    bool decode_trailing_one_signs(
+        BitReader& bits,
+        uint8_t trailing_ones,
+        std::vector<int8_t>& levels,
+        std::string& error)
+    {
+        levels.clear();
+        error.clear();
+
+        if (trailing_ones > 3)
+        {
+            error = "Nombre de trailing ones invalide.";
+            return false;
+        }
+
+        if (!bits.good())
+        {
+            error = "BitReader invalide : " + bits.error();
+            return false;
+        }
+
+        for (uint8_t i = 0; i < trailing_ones; ++i)
+        {
+            uint32_t sign = 0;
+
+            if (!bits.read_bit(sign))
+            {
+                levels.clear();
+                error = "Flux tronque pendant les signes trailing ones : "
+                    + bits.error();
+                return false;
+            }
+
+            levels.push_back(sign ? -1 : 1);
+        }
+
+        return true;
+    }
+}
+
+namespace jrte::h264
+{
+    bool decode_level_values(
+        BitReader& bits,
+        const CoeffToken& token,
+        std::vector<int32_t>& levels,
+        std::string& error)
+    {
+        levels.clear();
+        error.clear();
+
+        if (token.total_coeff > 16 ||
+            token.trailing_ones > 3 ||
+            token.trailing_ones > token.total_coeff)
+        {
+            error = "CoeffToken invalide.";
+            return false;
+        }
+
+        if (!bits.good())
+        {
+            error = "BitReader invalide : " + bits.error();
+            return false;
+        }
+
+        std::vector<int32_t> decoded;
+        decoded.reserve(token.total_coeff);
+
+        for (uint8_t i = 0; i < token.trailing_ones; ++i)
+        {
+            uint32_t sign = 0;
+
+            if (!bits.read_bit(sign))
+            {
+                error = "Flux tronque pendant trailing_ones_sign_flag : "
+                    + bits.error();
+                return false;
+            }
+
+            decoded.push_back(sign ? -1 : 1);
+        }
+
+        uint32_t suffix_length =
+            (token.total_coeff > 10 && token.trailing_ones < 3) ? 1u : 0u;
+
+        for (uint8_t i = token.trailing_ones;
+             i < token.total_coeff;
+             ++i)
+        {
+            uint32_t level_prefix = 0;
+            uint32_t bit = 0;
+
+            while (true)
+            {
+                if (!bits.read_bit(bit))
+                {
+                    error = "Flux tronque pendant level_prefix : "
+                        + bits.error();
+                    return false;
+                }
+
+                if (bit == 1)
+                    break;
+
+                ++level_prefix;
+
+                if (level_prefix > 28)
+                {
+                    error = "level_prefix invalide ou trop grand.";
+                    return false;
+                }
+            }
+
+            uint32_t suffix_size = suffix_length;
+
+            if (level_prefix == 14 && suffix_length == 0)
+                suffix_size = 4;
+            else if (level_prefix >= 15)
+                suffix_size = level_prefix - 3;
+
+            if (suffix_size > 25)
+            {
+                error = "level_suffix depasse la limite autorisee.";
+                return false;
+            }
+
+            uint32_t level_suffix = 0;
+
+            if (suffix_size > 0 &&
+                !bits.read_bits(suffix_size, level_suffix))
+            {
+                error = "Flux tronque pendant level_suffix : "
+                    + bits.error();
+                return false;
+            }
+
+            const uint64_t prefix_value =
+                level_prefix < 15 ? level_prefix : 15;
+
+            uint64_t level_code =
+                (prefix_value << suffix_length) + level_suffix;
+
+            if (level_prefix >= 15 && suffix_length == 0)
+                level_code += 15;
+
+            if (level_prefix >= 16)
+            {
+                level_code +=
+                    (uint64_t(1) << (level_prefix - 3)) - 4096;
+            }
+
+            if (i == token.trailing_ones &&
+                token.trailing_ones < 3)
+            {
+                level_code += 2;
+            }
+
+            int64_t signed_level = 0;
+
+            if ((level_code & 1u) == 0)
+                signed_level = static_cast<int64_t>((level_code + 2) / 2);
+            else
+                signed_level = -static_cast<int64_t>((level_code + 1) / 2);
+
+            if (signed_level < std::numeric_limits<int32_t>::min() ||
+                signed_level > std::numeric_limits<int32_t>::max())
+            {
+                error = "Niveau CAVLC hors limites int32.";
+                return false;
+            }
+
+            decoded.push_back(static_cast<int32_t>(signed_level));
+
+            if (suffix_length == 0)
+                suffix_length = 1;
+
+            const uint64_t threshold =
+                uint64_t(3) << (suffix_length - 1);
+
+            const uint64_t magnitude =
+                signed_level < 0
+                    ? static_cast<uint64_t>(-signed_level)
+                    : static_cast<uint64_t>(signed_level);
+
+            if (magnitude > threshold && suffix_length < 6)
+                ++suffix_length;
+        }
+
+        levels = std::move(decoded);
+        return true;
+    }
+}
+
+namespace jrte::h264
+{
+    bool decode_total_zeros(
+        BitReader& bits,
+        uint8_t total_coeff,
+        uint8_t& total_zeros,
+        std::string& error)
+    {
+        total_zeros = 0;
+        error.clear();
+
+        if (total_coeff == 0 || total_coeff > 16)
+        {
+            error = "TotalCoeff invalide pour total_zeros.";
+            return false;
+        }
+
+        if (!bits.good())
+        {
+            error = "BitReader invalide : " + bits.error();
+            return false;
+        }
+
+        if (total_coeff == 16)
+            return true;
+
+        static const char* const codes[15][16] =
+        {
+            {
+                "1", "011", "010", "0011", "0010", "00011",
+                "00010", "000011", "000010", "0000011",
+                "0000010", "00000011", "00000010",
+                "000000011", "000000010", "000000001"
+            },
+            {
+                "111", "110", "101", "100", "011", "0101",
+                "0100", "0011", "0010", "00011", "00010",
+                "000011", "000010", "000001", "000000"
+            },
+            {
+                "0101", "111", "110", "101", "0100", "0011",
+                "100", "011", "0010", "00011", "00010",
+                "000001", "00001", "000000"
+            },
+            {
+                "00011", "111", "0101", "0100", "110", "101",
+                "100", "0011", "011", "0010", "00010",
+                "00001", "00000"
+            },
+            {
+                "0101", "0100", "0011", "111", "110", "101",
+                "100", "011", "0010", "00001", "0001", "00000"
+            },
+            {
+                "000001", "00001", "111", "110", "101", "100",
+                "011", "010", "0001", "001", "000000"
+            },
+            {
+                "000001", "00001", "101", "100", "011", "11",
+                "010", "0001", "001", "000000"
+            },
+            {
+                "000001", "0001", "00001", "011", "11", "10",
+                "010", "001", "000000"
+            },
+            {
+                "000001", "000000", "0001", "11", "10", "001",
+                "01", "00001"
+            },
+            {
+                "00001", "00000", "001", "11", "10", "01", "0001"
+            },
+            {
+                "0000", "0001", "001", "010", "1", "011"
+            },
+            {
+                "0000", "0001", "01", "1", "001"
+            },
+            {
+                "000", "001", "1", "01"
+            },
+            {
+                "00", "01", "1"
+            },
+            {
+                "0", "1"
+            }
+        };
+
+        const uint32_t table_index =
+            static_cast<uint32_t>(total_coeff - 1);
+
+        std::string candidate;
+        candidate.reserve(9);
+
+        for (uint32_t length = 1; length <= 9; ++length)
+        {
+            uint32_t bit = 0;
+
+            if (!bits.read_bit(bit))
+            {
+                error = "Flux tronque pendant total_zeros : "
+                    + bits.error();
+                return false;
+            }
+
+            candidate.push_back(bit ? '1' : '0');
+
+            for (uint32_t value = 0; value < 16; ++value)
+            {
+                const char* expected = codes[table_index][value];
+
+                if (expected == nullptr)
+                    continue;
+
+                if (candidate == expected)
+                {
+                    if (value > 16 - total_coeff)
+                    {
+                        error = "total_zeros depasse la plage autorisee.";
+                        return false;
+                    }
+
+                    total_zeros = static_cast<uint8_t>(value);
+                    return true;
+                }
+            }
+        }
+
+        error = "Code total_zeros inconnu ou invalide.";
+        return false;
+    }
+}
+
+namespace jrte::h264
+{
+    bool decode_run_before(
+        BitReader& bits,
+        uint8_t zeros_left,
+        uint8_t& run_before,
+        std::string& error)
+    {
+        run_before = 0;
+        error.clear();
+
+        if (zeros_left == 0 || zeros_left > 15)
+        {
+            error = "zerosLeft invalide pour run_before.";
+            return false;
+        }
+
+        if (!bits.good())
+        {
+            error = bits.error();
+            return false;
+        }
+
+        static const char* codes[7][15] =
+        {
+            {"1", "0"},
+            {"1", "01", "00"},
+            {"11", "10", "01", "00"},
+            {"11", "10", "01", "001", "000"},
+            {"11", "10", "011", "010", "001", "000"},
+            {"11", "000", "001", "011", "010", "101", "100"},
+            {
+                "111", "110", "101", "100", "011",
+                "010", "001", "0001", "00001", "000001",
+                "0000001", "00000001", "000000001",
+                "0000000001", "00000000001"
+            }
+        };
+
+        const size_t column =
+            zeros_left <= 6 ? zeros_left - 1 : 6;
+
+        std::string candidate;
+        candidate.reserve(11);
+
+        for (size_t length = 1; length <= 11; ++length)
+        {
+            uint32_t bit = 0;
+
+            if (!bits.read_bit(bit))
+            {
+                error = "Flux tronque pendant run_before : ";
+                error += bits.error();
+                return false;
+            }
+
+            candidate.push_back(bit ? '1' : '0');
+
+            const uint8_t maximum_run =
+                zeros_left < 14 ? zeros_left : 14;
+
+            for (uint8_t value = 0; value <= maximum_run; ++value)
+            {
+                const char* expected = codes[column][value];
+
+                if (expected != nullptr && candidate == expected)
+                {
+                    run_before = value;
+                    return true;
+                }
+            }
+        }
+
+        error = "Code run_before inconnu ou invalide.";
+        return false;
+    }
+}
+
+namespace jrte::h264
+{
+    bool decode_residual_block_4x4(
+        BitReader& bits,
+        int nC,
+        std::array<int32_t, 16>& coefficients,
+        std::string& error)
+    {
+        coefficients.fill(0);
+        error.clear();
+
+        if (nC < 0)
+        {
+            error = "Le decodage complet des blocs chroma DC "
+                "n'est pas encore pris en charge.";
+            return false;
+        }
+
+        static constexpr uint8_t scan[16] =
+        {
+            0, 1, 4, 8, 5, 2, 3, 6,
+            9, 12, 13, 10, 7, 11, 14, 15
+        };
+
+        std::array<int32_t, 16> decoded_block{};
+
+        CoeffToken token;
+
+        if (!decode_coeff_token(bits, nC, token, error))
+            return false;
+
+        if (token.total_coeff == 0)
+        {
+            coefficients = decoded_block;
+            return true;
+        }
+
+        if (token.total_coeff > 16)
+        {
+            error = "TotalCoeff depasse 16.";
+            return false;
+        }
+
+        std::vector<int32_t> levels;
+
+        if (!decode_level_values(bits, token, levels, error))
+            return false;
+
+        if (levels.size() != token.total_coeff)
+        {
+            error = "Nombre de niveaux decode incorrect.";
+            return false;
+        }
+
+        uint8_t total_zeros = 0;
+
+        if (token.total_coeff < 16)
+        {
+            if (!decode_total_zeros(
+                bits,
+                token.total_coeff,
+                total_zeros,
+                error))
+            {
+                return false;
+            }
+        }
+
+        if (total_zeros > 16 - token.total_coeff)
+        {
+            error = "total_zeros hors limites pour le bloc 4x4.";
+            return false;
+        }
+
+        std::array<uint8_t, 16> runs{};
+        uint8_t zeros_left = total_zeros;
+
+        for (uint8_t i = 0; i + 1 < token.total_coeff; ++i)
+        {
+            if (zeros_left == 0)
+            {
+                runs[i] = 0;
+                continue;
+            }
+
+            if (!decode_run_before(
+                bits,
+                zeros_left,
+                runs[i],
+                error))
+            {
+                return false;
+            }
+
+            if (runs[i] > zeros_left)
+            {
+                error = "run_before depasse zerosLeft.";
+                return false;
+            }
+
+            zeros_left = static_cast<uint8_t>(
+                zeros_left - runs[i]
+            );
+        }
+
+        runs[token.total_coeff - 1] = zeros_left;
+
+        int coefficient_number = -1;
+
+        for (int i = static_cast<int>(token.total_coeff) - 1;
+             i >= 0;
+             --i)
+        {
+            coefficient_number +=
+                static_cast<int>(runs[i]) + 1;
+
+            if (coefficient_number < 0 ||
+                coefficient_number >= 16)
+            {
+                error = "Position de coefficient hors bloc 4x4.";
+                return false;
+            }
+
+            decoded_block[scan[coefficient_number]] = levels[i];
+        }
+
+        coefficients = decoded_block;
+        return true;
+    }
+
+    bool decode_chroma_dc_total_zeros(
+        BitReader& bits,
+        uint8_t total_coeff,
+        uint8_t max_num_coeff,
+        uint8_t& total_zeros,
+        std::string& error)
+    {
+        total_zeros = 0;
+        error.clear();
+
+        if (max_num_coeff != 4 && max_num_coeff != 8)
+        {
+            error = "Format chroma DC invalide.";
+            return false;
+        }
+
+        if (total_coeff == 0 || total_coeff > max_num_coeff)
+        {
+            error = "TotalCoeff invalide pour chroma DC total_zeros.";
+            return false;
+        }
+
+        if (!bits.good())
+        {
+            error = "BitReader invalide : " + bits.error();
+            return false;
+        }
+
+        if (total_coeff == max_num_coeff)
+            return true;
+
+        static const char* const codes420[4][4] =
+        {
+            { "1", "01", "001", "000" },
+            { "1", "01", "00", nullptr },
+            { "1", "0", nullptr, nullptr },
+            { nullptr, nullptr, nullptr, nullptr }
+        };
+
+        static const char* const codes422[8][8] =
+        {
+            { "1", "010", "011", "0010", "0011", "0001", "00001", "00000" },
+            { "000", "01", "001", "100", "101", "110", "111", nullptr },
+            { "000", "001", "01", "10", "110", "111", nullptr, nullptr },
+            { "110", "00", "01", "10", "111", nullptr, nullptr, nullptr },
+            { "00", "01", "10", "11", nullptr, nullptr, nullptr, nullptr },
+            { "00", "01", "1", nullptr, nullptr, nullptr, nullptr, nullptr },
+            { "0", "1", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr },
+            { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr }
+        };
+
+        const uint32_t table_index =
+            static_cast<uint32_t>(total_coeff - 1);
+
+        const uint32_t max_zeros =
+            static_cast<uint32_t>(max_num_coeff - total_coeff);
+
+        const char* const (*table)[8] = nullptr;
+
+        if (max_num_coeff == 4)
+        {
+            // Les tables 4:2:0 ont quatre colonnes.
+            std::string candidate;
+            candidate.reserve(3);
+
+            for (uint32_t length = 1; length <= 3; ++length)
+            {
+                uint32_t bit = 0;
+
+                if (!bits.read_bit(bit))
+                {
+                    error = "Flux tronque pendant chroma DC total_zeros : "
+                        + bits.error();
+                    return false;
+                }
+
+                candidate.push_back(bit ? '1' : '0');
+
+                for (uint32_t value = 0; value <= max_zeros; ++value)
+                {
+                    const char* expected = codes420[table_index][value];
+
+                    if (expected != nullptr && candidate == expected)
+                    {
+                        total_zeros = static_cast<uint8_t>(value);
+                        return true;
+                    }
+                }
+            }
+        }
+        else
+        {
+            std::string candidate;
+            candidate.reserve(5);
+
+            for (uint32_t length = 1; length <= 5; ++length)
+            {
+                uint32_t bit = 0;
+
+                if (!bits.read_bit(bit))
+                {
+                    error = "Flux tronque pendant chroma DC total_zeros : "
+                        + bits.error();
+                    return false;
+                }
+
+                candidate.push_back(bit ? '1' : '0');
+
+                for (uint32_t value = 0; value <= max_zeros; ++value)
+                {
+                    const char* expected = codes422[table_index][value];
+
+                    if (expected != nullptr && candidate == expected)
+                    {
+                        total_zeros = static_cast<uint8_t>(value);
+                        return true;
+                    }
+                }
+            }
+        }
+
+        error = "Code chroma DC total_zeros inconnu ou invalide.";
+        return false;
+    }
+}
+
+===== src\jrte_macroblock_decoder.cpp =====
+#include "jrte_macroblock_decoder.h"
+#include "jrte_cavlc_decoder.h"
+
+namespace jrte::h264
+{
+    bool derive_nc(
+        const NeighborCoeffInfo& neighbors,
+        int& nc,
+        std::string& error
+    )
+    {
+        error.clear();
+        nc = 0;
+
+        if (neighbors.left_available &&
+            neighbors.left_total_coeff > 16)
+        {
+            error = "Nombre de coefficients gauche invalide.";
+            return false;
+        }
+
+        if (neighbors.top_available &&
+            neighbors.top_total_coeff > 16)
+        {
+            error = "Nombre de coefficients haut invalide.";
+            return false;
+        }
+
+        if (neighbors.left_available && neighbors.top_available)
+        {
+            nc = (
+                static_cast<int>(neighbors.left_total_coeff) +
+                static_cast<int>(neighbors.top_total_coeff) +
+                1
+            ) / 2;
+        }
+        else if (neighbors.left_available)
+        {
+            nc = neighbors.left_total_coeff;
+        }
+        else if (neighbors.top_available)
+        {
+            nc = neighbors.top_total_coeff;
+        }
+
+        return true;
+    }
+
+    bool decode_macroblock_residual_block(
+        BitReader& reader,
+        const NeighborCoeffInfo& neighbors,
+        std::array<int32_t, 16>& coefficients,
+        uint8_t& total_coeff,
+        std::string& error
+    )
+    {
+        coefficients.fill(0);
+        total_coeff = 0;
+        error.clear();
+
+        int nc = 0;
+
+        if (!derive_nc(neighbors, nc, error))
+        {
+            return false;
+        }
+
+        if (!decode_residual_block_4x4(
+                reader,
+                nc,
+                coefficients,
+                error))
+        {
+            return false;
+        }
+
+        for (const int32_t coefficient : coefficients)
+        {
+            if (coefficient != 0)
+            {
+                ++total_coeff;
+            }
+        }
+
+        return true;
+    }
+}
+
+===== src\jrte_block_coeff_context.cpp =====
+#include "jrte_block_coeff_context.h"
+
+#include <limits>
+
+namespace jrte::h264
+{
+    bool BlockCoeffContext::reset(
+        uint32_t width,
+        uint32_t height,
+        std::string& error)
+    {
+        error.clear();
+
+        width_ = 0;
+        height_ = 0;
+        total_coeff_.clear();
+        decoded_.clear();
+
+        if (width == 0 || height == 0)
+        {
+            error = "Dimensions du contexte invalides.";
+            return false;
+        }
+
+        const size_t w = static_cast<size_t>(width);
+        const size_t h = static_cast<size_t>(height);
+
+        if (h > std::numeric_limits<size_t>::max() / w)
+        {
+            error = "Dimensions du contexte trop grandes.";
+            return false;
+        }
+
+        const size_t count = w * h;
+
+        total_coeff_.assign(count, 0);
+        decoded_.assign(count, 0);
+
+        width_ = width;
+        height_ = height;
+
+        return true;
+    }
+
+    size_t BlockCoeffContext::index(
+        uint32_t x,
+        uint32_t y) const
+    {
+        return static_cast<size_t>(y) *
+            static_cast<size_t>(width_) +
+            static_cast<size_t>(x);
+    }
+
+    bool BlockCoeffContext::record_block(
+        uint32_t x,
+        uint32_t y,
+        uint8_t total_coeff,
+        std::string& error)
+    {
+        error.clear();
+
+        if (width_ == 0 || height_ == 0)
+        {
+            error = "Contexte non initialise.";
+            return false;
+        }
+
+        if (x >= width_ || y >= height_)
+        {
+            error = "Coordonnees du bloc hors limites.";
+            return false;
+        }
+
+        if (total_coeff > 16)
+        {
+            error = "TotalCoeff doit etre compris entre 0 et 16.";
+            return false;
+        }
+
+        const size_t position = index(x, y);
+
+        total_coeff_[position] = total_coeff;
+        decoded_[position] = 1;
+
+        return true;
+    }
+
+    bool BlockCoeffContext::get_neighbor_info(
+        uint32_t x,
+        uint32_t y,
+        NeighborCoeffInfo& neighbors,
+        std::string& error) const
+    {
+        error.clear();
+        neighbors = {};
+
+        if (width_ == 0 || height_ == 0)
+        {
+            error = "Contexte non initialise.";
+            return false;
+        }
+
+        if (x >= width_ || y >= height_)
+        {
+            error = "Coordonnees du bloc hors limites.";
+            return false;
+        }
+
+        if (x > 0)
+        {
+            const size_t left = index(x - 1, y);
+
+            if (decoded_[left])
+            {
+                neighbors.left_available = true;
+                neighbors.left_total_coeff = total_coeff_[left];
+            }
+        }
+
+        if (y > 0)
+        {
+            const size_t top = index(x, y - 1);
+
+            if (decoded_[top])
+            {
+                neighbors.top_available = true;
+                neighbors.top_total_coeff = total_coeff_[top];
+            }
+        }
+
+        return true;
+    }
+
+    bool BlockCoeffContext::decode_block(
+        uint32_t x,
+        uint32_t y,
+        BitReader& reader,
+        std::array<int32_t, 16>& coefficients,
+        std::string& error)
+    {
+        error.clear();
+        coefficients.fill(0);
+
+        if (width_ == 0 || height_ == 0)
+        {
+            error = "Contexte non initialise.";
+            return false;
+        }
+
+        if (x >= width_ || y >= height_)
+        {
+            error = "Coordonnees du bloc hors limites.";
+            return false;
+        }
+
+        if (decoded_[index(x, y)])
+        {
+            error = "Ce bloc a deja ete decode.";
+            return false;
+        }
+
+        NeighborCoeffInfo neighbors;
+
+        if (!get_neighbor_info(x, y, neighbors, error))
+            return false;
+
+        uint8_t total_coeff = 0;
+
+        if (!decode_macroblock_residual_block(
+                reader,
+                neighbors,
+                coefficients,
+                total_coeff,
+                error))
+        {
+            coefficients.fill(0);
+            return false;
+        }
+
+        if (!record_block(x, y, total_coeff, error))
+        {
+            coefficients.fill(0);
+            return false;
+        }
+
+        return true;
+    }
+    uint32_t BlockCoeffContext::width() const
+    {
+        return width_;
+    }
+
+    uint32_t BlockCoeffContext::height() const
+    {
+        return height_;
+    }
+}
+
+
