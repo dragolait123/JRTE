@@ -22,6 +22,8 @@ add_library(JRTE.VideoEngine SHARED
     src/jrte_cavlc_decoder.cpp
     src/jrte_macroblock_decoder.cpp
     src/jrte_block_coeff_context.cpp
+    src/jrte_inverse_transform.cpp
+    src/jrte_inverse_quant.cpp
 )
 
 target_include_directories(JRTE.VideoEngine
@@ -181,6 +183,8 @@ add_test(
 add_executable(jrte_block_coeff_context_test
     tests/jrte_block_coeff_context_test.cpp
     src/jrte_block_coeff_context.cpp
+    src/jrte_inverse_transform.cpp
+    src/jrte_inverse_quant.cpp
     src/jrte_macroblock_decoder.cpp
     src/jrte_cavlc_decoder.cpp
     src/jrte_bit_reader.cpp
@@ -193,5 +197,36 @@ target_include_directories(jrte_block_coeff_context_test
 add_test(
     NAME JRTE_Block_Coeff_Context_Test
     COMMAND jrte_block_coeff_context_test
+)
+
+
+
+add_executable(jrte_inverse_transform_test
+    tests/jrte_inverse_transform_test.cpp
+    src/jrte_inverse_transform.cpp
+    src/jrte_inverse_quant.cpp
+)
+
+target_include_directories(jrte_inverse_transform_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+add_test(
+    NAME JRTE_Inverse_Transform_Test
+    COMMAND jrte_inverse_transform_test
+)
+
+add_executable(jrte_inverse_quant_test
+    tests/jrte_inverse_quant_test.cpp
+    src/jrte_inverse_quant.cpp
+)
+
+target_include_directories(jrte_inverse_quant_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+add_test(
+    NAME JRTE_Inverse_Quant_Test
+    COMMAND jrte_inverse_quant_test
 )
 

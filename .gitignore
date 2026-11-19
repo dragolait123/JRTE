@@ -21,3 +21,12 @@ backup_*/
 # Fichiers système
 Thumbs.db
 Desktop.ini
+# JRTE - fichiers generes
+**/build-debug/
+**/build-release/
+**/cmake-build-*/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/Testing/
+# Sauvegardes locales
+/backups/
